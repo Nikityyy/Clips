@@ -80,6 +80,7 @@ const de: { [K in keyof typeof en]: string } = {
   'create.promptVideoHint': 'Beschreibe die Bewegung, das Tempo und die Veränderungen in der Szene…',
   'create.promptRequired': 'Füge einen Prompt hinzu, bevor du startest.',
   'create.character': 'Figur',
+  'create.characterRecommendation': 'Empfohlen für wiedererkennbare Ergebnisse in deinen Kreationen.',
   'create.noCharacter': 'Keine Figur',
   'create.chooseCharacter': 'Figur auswählen',
   'create.makeCharacter': 'Figur erstellen',

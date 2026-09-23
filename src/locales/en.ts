@@ -78,6 +78,7 @@ const en = {
   'create.promptVideoHint': 'Describe the movement, pacing, and changes in the scene…',
   'create.promptRequired': 'Add a prompt before creating.',
   'create.character': 'Character',
+  'create.characterRecommendation': 'Recommended for consistent results across your creations.',
   'create.noCharacter': 'No character',
   'create.chooseCharacter': 'Choose a character',
   'create.makeCharacter': 'Create a character',

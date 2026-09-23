@@ -71,6 +71,16 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
         <button type="button" className={mode === 'video' ? 'is-active' : ''} aria-pressed={mode === 'video'} onClick={() => onMode('video')}><Film size={15} aria-hidden="true" />{t('create.modeVideo')}</button>
       </fieldset>
 
+      <section className="composer-field">
+        <FieldLabel>{t('create.character')}</FieldLabel>
+        <div className="composer-inline-control"><MenuSelect className="composer-select" label={t('create.character')} value={draft.characterId ?? ''} options={[{ value: '', label: t('create.noCharacter') }, ...snapshot.characters.map((item) => ({ value: item.id, label: item.name, description: item.description || t('character.noDescription'), imageUrl: snapshot.assets.find((asset) => asset.id === item.portraitAssetId)?.uri }))]} onChange={(value) => onDraft({ characterId: value || null })} /><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
+        <p className="composer-hint character-recommendation">{t('create.characterRecommendation')}</p>
+      </section>
+      <section className="composer-field prompt-field">
+        <div className="field-label-row"><label className="field-label" htmlFor="generation-prompt">{t('create.writePrompt')}</label><span className="field-hint">{new Intl.NumberFormat(snapshot.settings.locale).format(draft.prompt.length)} / 20,000</span></div>
+        <textarea id="generation-prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
+        <div className="prompt-footer"><span>{t('create.switchPrompt')}</span><button type="button" className="text-action" disabled={!character || !(character.prompt || character.description)} onClick={addCharacterPrompt}><UserRound size={13} aria-hidden="true" />{t('create.insertCharacterPrompt')}</button></div>
+      </section>
       <section className={`composer-field reference-field ${mode === 'video' ? 'video-reference-field' : ''}`}>
         <div className="composer-section-line"><FieldLabel>{t(mode === 'video' ? 'create.videoReferences' : 'create.references')}</FieldLabel><span className="field-hint">{model && maxReferences > 0 ? `${selectedReferences.length} / ${maxReferences}` : model ? t('create.referencesUnsupported') : ''}</span></div>
         {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : <p className="composer-hint">{model && maxReferences === 0 ? t('create.referencesUnsupported') : t(mode === 'video' ? 'create.videoReferenceHint' : 'create.referenceHint')}</p>}
@@ -79,16 +89,6 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
           <Button size="small" variant="quiet" icon={FolderOpen} onClick={onImport}>{t('create.importReference')}</Button>
           <Button size="small" variant="quiet" icon={FileImage} onClick={onPaste}>{t('create.pasteReference')}</Button>
         </div>
-      </section>
-      <section className="composer-field prompt-field">
-        <div className="field-label-row"><label className="field-label" htmlFor="generation-prompt">{t('create.writePrompt')}</label><span className="field-hint">{new Intl.NumberFormat(snapshot.settings.locale).format(draft.prompt.length)} / 20,000</span></div>
-        <textarea id="generation-prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
-        <div className="prompt-footer"><span>{t('create.switchPrompt')}</span><button type="button" className="text-action" disabled={!character || !(character.prompt || character.description)} onClick={addCharacterPrompt}><UserRound size={13} aria-hidden="true" />{t('create.insertCharacterPrompt')}</button></div>
-      </section>
-
-      <section className="composer-field">
-        <FieldLabel>{t('create.character')}</FieldLabel>
-        <div className="composer-inline-control"><MenuSelect className="composer-select" label={t('create.character')} value={draft.characterId ?? ''} options={[{ value: '', label: t('create.noCharacter') }, ...snapshot.characters.map((item) => ({ value: item.id, label: item.name, description: item.description || t('character.noDescription'), imageUrl: snapshot.assets.find((asset) => asset.id === item.portraitAssetId)?.uri }))]} onChange={(value) => onDraft({ characterId: value || null })} /><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
       </section>
 
       <section className="composer-field generation-options">

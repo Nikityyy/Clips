@@ -89,6 +89,12 @@ try {
   const prematureConnect = await page.evaluate(() => window.clips.connectFlow());
   assert.equal(prematureConnect.ok, false, 'Flow IPC must reject sign-in before notice acceptance');
   assert.equal(prematureConnect.error.code, 'PERMISSION_DENIED');
+  const consentSpacing = await terms.evaluate((dialog) => {
+    const consent = dialog.querySelector('.startup-consent').getBoundingClientRect();
+    const note = dialog.querySelector('.startup-legal-limit').getBoundingClientRect();
+    return note.top - consent.bottom;
+  });
+  assert.ok(consentSpacing >= 12, `the legal note should breathe below the consent border (gap: ${consentSpacing}px)`);
   await terms.getByRole('checkbox').check();
   await terms.getByRole('button', { name: 'Continue to Google sign-in' }).click();
   const signIn = page.getByRole('dialog');
@@ -101,17 +107,23 @@ try {
     await next.click();
   }
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
-  if (process.platform === 'win32') {
-    const titlebarLayout = await page.evaluate(() => ({
-      shellTopPadding: getComputedStyle(document.querySelector('.app-shell')).paddingTop,
-      navigationTop: document.querySelector('.navigation-rail').getBoundingClientRect().top,
-      toolbarBackground: getComputedStyle(document.querySelector('.workspace-toolbar')).backgroundColor,
-      shellBackground: getComputedStyle(document.querySelector('.app-shell')).backgroundColor,
-    }));
-    assert.equal(titlebarLayout.shellTopPadding, '42px', 'Windows content should begin below the native caption controls');
-    assert.equal(titlebarLayout.navigationTop, 42, 'the navigation rail should not sit underneath the caption controls');
-    assert.equal(titlebarLayout.toolbarBackground, titlebarLayout.shellBackground, 'the app toolbar should match the Windows caption-control background');
-  }
+  await page.evaluate(() => document.documentElement.classList.add('is-windows'));
+  const titlebarLayout = await page.evaluate(() => ({
+    shellTopPadding: getComputedStyle(document.querySelector('.app-shell')).paddingTop,
+    navigationTop: document.querySelector('.navigation-rail').getBoundingClientRect().top,
+    toolbarBackground: getComputedStyle(document.querySelector('.workspace-toolbar')).backgroundColor,
+    railBackground: getComputedStyle(document.querySelector('.navigation-rail')).backgroundColor,
+    shellBackground: getComputedStyle(document.querySelector('.app-shell')).backgroundColor,
+    reservedControlSpace: Number.parseFloat(getComputedStyle(document.querySelector('.workspace-toolbar')).paddingRight),
+  }));
+  assert.equal(titlebarLayout.shellTopPadding, '0px', 'Windows app content should integrate into the caption row without a blank spacer');
+  assert.equal(titlebarLayout.navigationTop, 0, 'the navigation rail should begin at the top of the window');
+  assert.equal(titlebarLayout.toolbarBackground, titlebarLayout.shellBackground, 'the app toolbar should match the Windows caption-control background');
+  assert.equal(titlebarLayout.railBackground, titlebarLayout.shellBackground, 'the app rail should match the Windows caption-control background');
+  assert.ok(titlebarLayout.reservedControlSpace >= 150, 'toolbar actions should stay clear of native caption buttons');
+  await page.evaluate(() => document.documentElement.classList.remove('is-windows'));
+  assert.equal(await page.locator('.composer-panel > .composer-field').first().locator('.field-label').textContent(), 'Character', 'character choice should be the first generation setting');
+  assert.equal(await page.locator('.workspace-route').evaluate((element) => getComputedStyle(element).animationName), 'workspace-arrive', 'page changes should use a restrained entrance animation');
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
 
@@ -161,6 +173,9 @@ try {
     return snapshot.ok ? snapshot.data.assets.find((asset) => asset.kind === 'image') : null;
   });
   assert.ok(firstAsset);
+  await page.locator('.result-card-open').first().click();
+  assert.equal(await page.locator('.context-work-panel').evaluate((element) => getComputedStyle(element).animationName), 'inspector-arrive', 'opening image details should ease into view');
+  await page.locator('.result-card-open').first().click();
   const characterResult = await page.evaluate(async (portraitAssetId) => window.clips.createCharacter({
     name: 'Luma',
     description: 'A recurring fictional subject.',

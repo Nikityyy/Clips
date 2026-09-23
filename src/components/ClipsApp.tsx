@@ -557,7 +557,7 @@ export function ClipsApp() {
             <button type="button" className={`toolbar-account ${view === 'profile' ? 'is-current' : ''}`} onClick={() => setView('profile')} aria-label={t('nav.profile')}><UserRound size={17} strokeWidth={1.7} /><span>{activeAccount?.provider === 'mock' ? t('account.localTitle') : activeAccount?.label ?? t('common.noAccount')}</span></button>
           </div>
         </header>
-        {currentView}
+        <div key={`${view}-${createMode}`} className="workspace-route">{currentView}</div>
       </section>
 
       {selectedAsset ? <aside className="context-panel context-work-panel">
