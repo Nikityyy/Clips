@@ -551,7 +551,7 @@ function ensureFreshFlowSignIn(): Promise<void> {
   if (MOCK_PROVIDER_ENABLED || mustStore().setting<number>('flowAccountResetVersion', 0) >= FLOW_ACCOUNT_RESET_VERSION) return Promise.resolve();
   if (flowAccountResetPromise) return flowAccountResetPromise;
   flowAccountResetInProgress = true;
-  capabilities = { ...capabilities, status: 'checking', profileName: FLOW_PROFILE_NAME, detail: 'Removing saved Google sign-ins before your first login.' };
+  capabilities = { ...capabilities, status: 'checking', profileName: FLOW_PROFILE_NAME, detail: '' };
   publishSnapshot();
   flowAccountResetPromise = (async () => {
     const profiles = await flowCli.profiles();
@@ -567,14 +567,13 @@ function ensureFreshFlowSignIn(): Promise<void> {
       db.setSetting('flowAccountResetVersion', FLOW_ACCOUNT_RESET_VERSION);
     });
     await db.flush();
-    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: 'Saved Google sign-ins were cleared. Sign in to choose an account for Clips.' };
+    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: '' };
     flowAccountResetInProgress = false;
     publishSnapshot();
   })().catch((error: unknown) => {
     flowAccountResetInProgress = false;
     flowAccountResetPromise = null;
-    const message = error instanceof Error ? error.message : 'Saved Google accounts could not be cleared.';
-    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: `Clips could not reset saved Google sign-ins: ${message}` };
+    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: 'Could not prepare Google sign-in.' };
     publishSnapshot();
     throw error;
   });
