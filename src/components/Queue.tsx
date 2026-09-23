@@ -6,6 +6,7 @@ import type { AppSnapshot, Asset, GenerationJob } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { dateTime, durationLabel } from '@/lib/i18n';
 import { Button, EmptyState, SectionHeading } from '@/components/ui';
+import { friendlyModelName, readableModelFallback } from '@/shared/model-label';
 
 type QueueFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
 const filters: { id: QueueFilter; key: 'queue.filterAll' | 'queue.filterActive' | 'queue.filterComplete' | 'queue.filterFailed' | 'queue.filterCancelled' }[] = [
@@ -64,7 +65,7 @@ function QueueJob({ job, snapshot, busy, t, onRetry, onCancel, onReuse, onSelect
   const outputs = job.outputAssetIds.map((id) => snapshot.assets.find((asset) => asset.id === id && !asset.deletedAt)).filter((asset): asset is Asset => Boolean(asset));
   const character = job.characterId ? snapshot.characters.find((item) => item.id === job.characterId)?.name : null;
   const model = snapshot.capabilities.models.find((item) => item.id === job.modelId);
-  const modelName = job.modelId === 'mock-image' ? t('model.portraitStudy') : job.modelId === 'mock-video' ? t('model.motionStudy') : model?.label ?? job.modelId;
+  const modelName = job.modelId === 'mock-image' ? t('model.portraitStudy') : job.modelId === 'mock-video' ? t('model.motionStudy') : model?.label ?? friendlyModelName(job.modelId) ?? readableModelFallback(job.modelId);
   const statusLabel = t(`status.${job.status}` as 'status.queued');
   const progressLabel = t('queue.progressLabel', { status: statusLabel, percent: new Intl.NumberFormat(snapshot.settings.locale).format(job.progress) });
   const created = dateTime(snapshot.settings.locale, job.createdAt);

@@ -9,6 +9,7 @@ import type { Notice, Translate, View } from '@/lib/app-types';
 import { translate, type TranslationKey } from '@/lib/i18n';
 import { AccountsWorkspace, SettingsWorkspace } from '@/components/Workspace';
 import { CharactersWorkspace } from '@/components/Characters';
+import { GuidedTour } from '@/components/GuidedTour';
 import { LibraryWorkspace } from '@/components/Library';
 import { QueueWorkspace } from '@/components/Queue';
 import { AssetDetails, CreatorCanvas, CreatorPanel } from '@/components/Studio';
@@ -126,6 +127,7 @@ export function ClipsApp() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
 
   useEffect(() => {
     if (!snapshot || draftsInitialized.current) return;
@@ -544,7 +546,19 @@ export function ClipsApp() {
 
   const finishOnboarding = useCallback(() => {
     localStorage.setItem('clips-onboarding-complete', 'true');
+    setView('create');
     setOnboardingStep(null);
+  }, []);
+
+  const startTutorial = useCallback(() => {
+    setView('create');
+    setOnboardingStep(0);
+  }, []);
+
+  const changeTutorialStep = useCallback((step: number) => {
+    const tourViews: View[] = ['create', 'create', 'create', 'characters', 'library'];
+    setView(tourViews[Math.max(0, Math.min(tourViews.length - 1, step))]);
+    setOnboardingStep(step);
   }, []);
 
 
@@ -568,16 +582,16 @@ export function ClipsApp() {
   if (welcomeStep !== null) return <Onboarding step={welcomeStep} locale={locale} onStep={setWelcomeStep} onDone={finishWelcome} onLocale={(value) => void setLocale(value)} t={t} />;
   if (!snapshot.flowNoticeAccepted) return <TermsGate checked={flowNoticeChecked} error={gateError} busy={pending === 'accept-notice'} onChecked={setFlowNoticeChecked} onAccept={() => void acceptFlowNotice()} t={t} />;
   if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate snapshot={snapshot} status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} busy={Boolean(pending)} onConnect={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} t={t} />;
-  if (snapshot.capabilities.provider === 'google-flow' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <Onboarding step={0} locale={locale} onStep={setOnboardingStep} onDone={finishOnboarding} onLocale={(value) => void setLocale(value)} t={t} />;
   if (snapshot.capabilities.provider === 'mock' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <FlowSignInGate snapshot={snapshot} status="mock-ready" detail={snapshot.capabilities.detail} error={gateError} busy={false} onConnect={() => { setOnboardingStep(0); }} onAddAccount={() => undefined} onSelectAccount={() => undefined} t={t} />;
 
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
   const currentDraft = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
   const selectedAsset = snapshot.assets.find((asset) => asset.id === selectedAssetId && !asset.deletedAt) ?? null;
+  const guidedTourActive = onboardingStep !== null || (snapshot.capabilities.provider === 'google-flow' && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete'));
   const currentView = view === 'create'
     ? <CreatorCanvas snapshot={snapshot} mode={createMode} selectedAssetId={selectedAssetId} t={t} onSelect={(asset) => setSelectedAssetId(asset.id)} onOpenLibrary={() => setView('library')} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onInspect={(asset) => setSelectedAssetId(asset.id)} />
     : view === 'settings'
-      ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={() => setOnboardingStep(0)} onOpenDataFolder={() => void openDataFolder()} busy={Boolean(pending)} t={t} />
+      ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={startTutorial} onOpenDataFolder={() => void openDataFolder()} busy={Boolean(pending)} t={t} />
       : view === 'profile'
         ? <AccountsWorkspace snapshot={snapshot} onConnectFlow={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} onLogout={() => void logoutFlow()} busy={Boolean(pending)} t={t} />
         : view === 'characters'
@@ -593,7 +607,7 @@ export function ClipsApp() {
       <nav className="navigation-rail" aria-label={t('accessibility.primaryNavigation')}>
         <button className="brand-mark" type="button" aria-label={t('app.name')} onClick={() => setView('create')}><Clapperboard size={26} strokeWidth={2.4} aria-hidden="true" /></button>
         <div className="rail-nav">
-          {navDefinition.map(({ view: itemView, key, icon: Icon }) => <button key={itemView} type="button" className={`rail-nav-item tooltip-trigger ${view === itemView ? 'is-active' : ''}`} aria-label={t(key)} aria-current={view === itemView ? 'page' : undefined} data-tooltip={t(key)} onClick={() => setView(itemView)}>
+          {navDefinition.map(({ view: itemView, key, icon: Icon }) => <button key={itemView} type="button" className={`rail-nav-item tooltip-trigger ${view === itemView ? 'is-active' : ''}`} data-tour={itemView === 'characters' || itemView === 'library' ? itemView : undefined} aria-label={t(key)} aria-current={view === itemView ? 'page' : undefined} data-tooltip={t(key)} onClick={() => setView(itemView)}>
             <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
           </button>)}
         </div>
@@ -629,7 +643,7 @@ export function ClipsApp() {
         <IconButton label={t('common.close')} icon={X} size="small" onClick={() => setNotice(null)} />
       </div> : null}
 
-      {onboardingStep !== null ? <Onboarding step={onboardingStep} locale={locale} onStep={setOnboardingStep} onDone={finishOnboarding} onLocale={(value) => void setLocale(value)} t={t} /> : null}
+      {guidedTourActive ? <GuidedTour step={onboardingStep ?? 0} onStep={changeTutorialStep} onDone={finishOnboarding} t={t} /> : null}
 
       {deleteCharacter ? <Modal title={t('character.deleteTitle')} description={t('character.deleteBody')} onClose={() => setDeleteCharacter(null)} closeLabel={t('common.close')} footer={<><Button onClick={() => setDeleteCharacter(null)}>{t('common.cancel')}</Button><Button variant="danger" busy={pending === deleteCharacter.id} onClick={() => void confirmDeleteCharacter()}>{t('common.delete')}</Button></>}><p className="remove-account-label">{deleteCharacter.name}</p></Modal> : null}
       {importIssues ? <Modal title={t('modal.importIssues')} description={t('modal.importIssuesHint')} onClose={() => setImportIssues(null)} closeLabel={t('common.close')}><ul className="import-issues-list">{importIssues.map((issue, index) => <li key={`${issue.name}-${index}`}><strong>{issue.name}</strong><span>{issue.message}</span></li>)}</ul><div className="import-issues-footer"><Button variant="primary" onClick={() => setImportIssues(null)}>{t('common.done')}</Button></div></Modal> : null}

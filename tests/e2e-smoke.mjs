@@ -118,11 +118,32 @@ try {
   await signIn.getByRole('heading', { name: 'Connect your Google account' }).waitFor();
   await signIn.getByRole('button', { name: 'Continue with local test mode' }).click();
   const tutorial = page.getByRole('dialog');
-  await tutorial.getByRole('heading', { name: /Make images and clips/ }).waitFor();
-  for (let step = 0; step < 4; step += 1) {
-    const next = tutorial.getByRole('button', { name: step === 3 ? 'Open the studio' : 'Continue' });
-    await next.click();
+  await tutorial.getByRole('heading', { name: 'Start with your idea' }).waitFor();
+  assert.equal(await page.locator('[data-tour="prompt"]').count(), 1, 'the interactive tour should sit over the real workspace');
+  assert.equal(await page.locator('[data-tour="prompt"]').isVisible(), true, 'the highlighted studio controls should remain rendered behind the tour');
+  assert.equal(await page.locator('.onboarding-visual').count(), 0, 'the post-login tour should be a real workspace walkthrough, not the repeated welcome slides');
+  await page.locator('.guided-tour-spotlight').waitFor();
+  assert.equal(await page.locator('.guided-tour-spotlight').count(), 1, 'the tour should spotlight one actionable part of the real interface');
+  const firstTarget = await page.locator('[data-tour="prompt"]').evaluate((element) => {
+    const target = element.getBoundingClientRect();
+    const shade = [...document.querySelectorAll('.guided-tour-shade')].map((node) => node.getBoundingClientRect());
+    const cx = target.left + target.width / 2;
+    const cy = target.top + target.height / 2;
+    return { targetCenterExposed: !shade.some((rect) => cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) };
+  });
+  assert.equal(firstTarget.targetCenterExposed, true, 'the highlighted target should remain usable through the dimmed overlay');
+  for (const title of ['Give your idea a visual anchor', 'Choose a model and format']) {
+    await tutorial.getByRole('button', { name: 'Next' }).click();
+    await tutorial.getByRole('heading', { name: title }).waitFor();
   }
+  await tutorial.getByRole('button', { name: 'Next' }).click();
+  await tutorial.getByRole('heading', { name: 'Explore your characters' }).waitFor();
+  assert.equal(await tutorial.getByRole('button', { name: 'Next' }).isDisabled(), true, 'the guided navigation exercise should ask users to try the highlighted tab');
+  await page.locator('[data-tour="characters"]').click();
+  await tutorial.getByRole('button', { name: 'Next' }).click();
+  await tutorial.getByRole('heading', { name: 'Find your media again' }).waitFor();
+  await page.locator('[data-tour="library"]').click();
+  await tutorial.getByRole('button', { name: 'Open the studio' }).click();
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
   await page.evaluate(() => document.documentElement.classList.add('is-windows'));
   const titlebarLayout = await page.evaluate(() => ({

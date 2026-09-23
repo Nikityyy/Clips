@@ -58,11 +58,34 @@ describe('gflow-cli adapter data', () => {
       models: [
         { id: 'nano2', label: 'Nano Banana 2', kind: 'image', aliases: ['nano2', 'nano-banana-2'], referenceCap: 14, maxDuration: null },
         { id: 'imagen4', label: 'Imagen 4', kind: 'image', aliases: ['imagen4'], referenceCap: 0, maxDuration: null },
-        { id: 'veo-fast', label: 'Veo Fast', kind: 'video', aliases: ['veo-fast'], referenceCap: 3, maxDuration: 8 },
+        { id: 'veo-fast', label: 'Veo 3.1 Fast', kind: 'video', aliases: ['veo-fast'], referenceCap: 3, maxDuration: 8 },
       ],
       imageAspectRatios: ['1:1', '4:3'],
       videoAspectRatios: ['9:16', '16:9'],
     });
+  });
+
+  it('shows product model names while keeping connector aliases as generation IDs', () => {
+    const modelCatalog = parseFlowCatalog(JSON.stringify({
+      image: {
+        models: [
+          { name: 'NARWHAL', aliases: ['nano2', 'nano-banana-2'], ref_cap: 10 },
+          { name: 'GEM_PIX_2', aliases: ['nano-pro'], ref_cap: 10 },
+          { name: 'IMAGEN_3_5', aliases: ['image4'], ref_cap: 3 },
+        ],
+        aspects: [{ ratio: '1:1' }],
+      },
+      video: {
+        models: [{ name: 'VEO_3_1_QUALITY', aliases: ['veo-quality'], ref_cap: 3 }],
+        aspects: [{ ratio: '16:9' }],
+      },
+    }));
+    expect(modelCatalog.models.map(({ id, label }) => [id, label])).toEqual([
+      ['nano2', 'Nano Banana 2'],
+      ['nano-pro', 'Nano Banana Pro'],
+      ['image4', 'Imagen 4'],
+      ['veo-quality', 'Veo 3.1 Quality'],
+    ]);
   });
 
   it('fails clearly when the connector has no complete image/video model catalog', () => {

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import runtimeSpec from './flow-runtime-spec.json';
+import { friendlyModelName, readableModelFallback } from '../src/shared/model-label';
 
 export type FlowJobKind = 'image' | 'video';
 
@@ -83,13 +84,19 @@ function parseModelList(value: unknown, kind: FlowJobKind): FlowModel[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
-    const model = item as { name?: unknown; aliases?: unknown; ref_cap?: unknown; max_duration?: unknown };
+    const model = item as { name?: unknown; display_name?: unknown; label?: unknown; aliases?: unknown; ref_cap?: unknown; max_duration?: unknown };
     if (typeof model.name !== 'string' || !Array.isArray(model.aliases)) return [];
     const aliases = model.aliases.filter((alias): alias is string => typeof alias === 'string' && alias.length > 0);
     if (!aliases.length) return [];
+    const friendlyAlias = aliases.map(friendlyModelName).find((label) => label !== null);
+    const label = typeof model.display_name === 'string' && model.display_name.trim()
+      ? model.display_name.trim()
+      : typeof model.label === 'string' && model.label.trim()
+        ? model.label.trim()
+        : friendlyModelName(model.name) ?? friendlyAlias ?? readableModelFallback(aliases.find((alias) => alias.includes('-')) ?? model.name);
     return [{
       id: aliases[0],
-      label: model.name,
+      label,
       kind,
       aliases,
       referenceCap: typeof model.ref_cap === 'number' ? Math.max(0, model.ref_cap) : 0,

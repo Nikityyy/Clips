@@ -10,6 +10,7 @@ import type { Translate } from '@/lib/app-types';
 import { dateTime, durationLabel, fileSize } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
 import { Button, EmptyState, FieldLabel, IconButton, MenuSelect, Modal, SectionHeading } from '@/components/ui';
+import { friendlyModelName, readableModelFallback } from '@/shared/model-label';
 
 export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters, onConnectFlow }: {
   snapshot: AppSnapshot;
@@ -78,10 +79,10 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
       </section>
       <section className="composer-field prompt-field">
         <div className="field-label-row"><label className="field-label" htmlFor="generation-prompt">{t('create.writePrompt')}</label><span className="field-hint">{new Intl.NumberFormat(snapshot.settings.locale).format(draft.prompt.length)} / 20,000</span></div>
-        <textarea id="generation-prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
+        <textarea id="generation-prompt" data-tour="prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
         <div className="prompt-footer"><span>{t('create.switchPrompt')}</span><button type="button" className="text-action" disabled={!character || !(character.prompt || character.description)} onClick={addCharacterPrompt}><UserRound size={13} aria-hidden="true" />{t('create.insertCharacterPrompt')}</button></div>
       </section>
-      <section className={`composer-field reference-field ${mode === 'video' ? 'video-reference-field' : ''}`}>
+      <section className={`composer-field reference-field ${mode === 'video' ? 'video-reference-field' : ''}`} data-tour="references">
         <div className="composer-section-line"><FieldLabel>{t(mode === 'video' ? 'create.videoReferences' : 'create.references')}</FieldLabel><span className="field-hint">{model && maxReferences > 0 ? `${selectedReferences.length} / ${maxReferences}` : model ? t('create.referencesUnsupported') : ''}</span></div>
         {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : <p className="composer-hint">{model && maxReferences === 0 ? t('create.referencesUnsupported') : t(mode === 'video' ? 'create.videoReferenceHint' : 'create.referenceHint')}</p>}
         <div className="reference-actions">
@@ -91,7 +92,7 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
         </div>
       </section>
 
-      <section className="composer-field generation-options">
+      <section className="composer-field generation-options" data-tour="options">
         <div className="composer-field">
           <FieldLabel>{t('create.model')}</FieldLabel>
           <MenuSelect className="composer-select" label={t('create.model')} value={draft.modelId} options={modeModels.map((item) => ({ value: item.id, label: item.label, description: item.referenceCap ? t('create.modelReferenceCap', { count: item.referenceCap }) : undefined }))} onChange={(value) => onDraft({ modelId: value, referenceAssetIds: draft.referenceAssetIds.slice(0, modeModels.find((item) => item.id === value)?.referenceCap ?? 0) })} disabled={!modeModels.length} />
@@ -177,7 +178,7 @@ export function AssetDetails({ asset, snapshot, t, onDelete, onReveal, onUseRefe
         <Metadata label={t('library.origin')} value={t(sourceKey(asset.provenance.source))} />
         {asset.provenance.provider ? <Metadata label={t('library.provider')} value={asset.provenance.provider === 'mock' ? t('model.localName') : 'Google Flow'} /> : null}
         {asset.provenance.accountId ? <Metadata label={t('library.account')} value={snapshot.accounts.find((account) => account.id === asset.provenance.accountId)?.label ?? t('common.unknown')} /> : null}
-        {asset.provenance.model ? <Metadata label={t('library.model')} value={asset.provenance.model === 'mock-image' ? t('model.portraitStudy') : asset.provenance.model === 'mock-video' ? t('model.motionStudy') : asset.provenance.model} /> : null}
+        {asset.provenance.model ? <Metadata label={t('library.model')} value={asset.provenance.model === 'mock-image' ? t('model.portraitStudy') : asset.provenance.model === 'mock-video' ? t('model.motionStudy') : snapshot.capabilities.models.find((model) => model.id === asset.provenance.model || model.aliases?.includes(asset.provenance.model ?? ''))?.label ?? friendlyModelName(asset.provenance.model) ?? readableModelFallback(asset.provenance.model)} /> : null}
         {asset.provenance.sourceAssetIds.length ? <Metadata label={t('library.parent')} value={asset.provenance.sourceAssetIds.map((id) => snapshot.assets.find((item) => item.id === id)?.title ?? t('common.unknown')).join(', ')} /> : null}
         {characterNames.length ? <Metadata label={t('common.character')} value={characterNames.join(', ')} /> : null}
       </dl>
