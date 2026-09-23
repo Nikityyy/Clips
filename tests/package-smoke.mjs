@@ -22,6 +22,7 @@ const archivePath = process.platform === 'darwin'
   ? path.join(packageDirectory, 'app.asar')
   : path.join(packageDirectory, 'resources', 'app.asar');
 const localEnv = { CLIPS_TEST_PACKAGED_USER_DATA: isolation };
+assert.equal(existsSync(path.join(packageDirectory, 'resources', 'flow-runtime-spec.json')), true, 'the Windows installer should include the pinned runtime manifest without bundling the runtime payload');
 
 let app;
 try {
