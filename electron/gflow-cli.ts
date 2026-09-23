@@ -52,7 +52,10 @@ export async function patchGoogleLoginSources(cache: string): Promise<number> {
         const file = path.join(packagePath, authModule);
         let source: string;
         try { source = await fs.readFile(file, 'utf8'); } catch { continue; }
-        const updated = source.replace(/^GEMINI_URL = "https:\/\/labs\.google\/fx\/tools\/flow\?hl=en"\r?$/m, `GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`);
+        // An earlier Clips build patched this assignment to a different
+        // ServiceLogin URL. Replace any literal URL here so upgrading from
+        // that build also reaches the intended Flow sign-in destination.
+        const updated = source.replace(/^GEMINI_URL = "https?:\/\/[^"\r\n]+"\r?$/m, `GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`);
         if (updated !== source) {
           await fs.writeFile(file, updated);
           await fs.rm(path.join(packagePath, '__pycache__'), { recursive: true, force: true });
@@ -193,7 +196,13 @@ export class GFlowCli {
       this.signInPreparationPromise = (async () => {
         const setup = await this.runtime();
         const readyMarker = path.join(this.userDataPath(), 'runtime', `signin-ready-${GFLOW_VERSION}.ready`);
-        if (await fs.access(readyMarker).then(() => true, () => false)) return;
+        const alreadyPrepared = await fs.access(readyMarker).then(() => true, () => false);
+        if (alreadyPrepared) {
+          // Re-apply this idempotent compatibility patch even when Chromium
+          // was warmed by an older app build with a different sign-in URL.
+          await this.patchGoogleLoginEntryPoint();
+          return;
+        }
         await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', '--help'], setup.env, 120_000);
         const browserMarker = path.join(setup.env.PLAYWRIGHT_BROWSERS_PATH ?? '', `clips-chromium-${GFLOW_VERSION}.ready`);
         const browserReady = await fs.access(browserMarker).then(() => true, () => false);

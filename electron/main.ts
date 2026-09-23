@@ -93,6 +93,7 @@ const DEFAULT_ACCOUNT_ID = MOCK_PROVIDER_ENABLED ? 'mock-default' : 'flow-defaul
 const FLOW_ACCOUNT_ID = 'flow-default';
 const FLOW_PROFILE_NAME = 'clips';
 const FLOW_NOTICE_VERSION = '2026-09';
+const FLOW_ACCOUNT_RESET_VERSION = 1;
 const LEGAL_LINKS = {
   'google-terms': 'https://policies.google.com/terms',
   'flow-terms': 'https://labs.google/terms',
@@ -177,6 +178,8 @@ let windowStateTimer: ReturnType<typeof setTimeout> | null = null;
 let menuLocale: Locale = 'en';
 let snapshotRevision = 0;
 const scheduledJobs = new Set<EntityId>();
+let flowAccountResetInProgress = false;
+let flowAccountResetPromise: Promise<void> | null = null;
 
 function mustStore(): DatabaseStore {
   if (!store) throw new ClipsError('STORAGE_ERROR', 'Clips storage is still starting. Try again in a moment.');
@@ -539,6 +542,45 @@ function requireFlowNotice(): void {
   if (!flowNoticeAccepted()) throw new ClipsError('PERMISSION_DENIED', 'Review and accept the Google Flow notice before connecting or generating.');
 }
 
+/**
+ * One-time auth migration: start with a genuinely clean gflow profile so the
+ * first login cannot silently reuse a previously selected Google session.
+ * Media, projects, and generation history remain untouched.
+ */
+function ensureFreshFlowSignIn(): Promise<void> {
+  if (MOCK_PROVIDER_ENABLED || mustStore().setting<number>('flowAccountResetVersion', 0) >= FLOW_ACCOUNT_RESET_VERSION) return Promise.resolve();
+  if (flowAccountResetPromise) return flowAccountResetPromise;
+  flowAccountResetInProgress = true;
+  capabilities = { ...capabilities, status: 'checking', profileName: FLOW_PROFILE_NAME, detail: 'Removing saved Google sign-ins before your first login.' };
+  publishSnapshot();
+  flowAccountResetPromise = (async () => {
+    const profiles = await flowCli.profiles();
+    for (const profile of profiles) await flowCli.logout(profile.name);
+
+    const settings = activeSettings();
+    settings.activeAccountId = FLOW_ACCOUNT_ID;
+    const db = mustStore();
+    db.transaction(() => {
+      db.run("DELETE FROM accounts WHERE provider = 'google-flow'");
+      db.run('INSERT INTO accounts (id, provider, label, connection, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, label = excluded.label, connection = excluded.connection', [FLOW_ACCOUNT_ID, 'google-flow', 'Google Flow', 'needs-login', nowIso()]);
+      db.setSetting('app', settings);
+      db.setSetting('flowAccountResetVersion', FLOW_ACCOUNT_RESET_VERSION);
+    });
+    await db.flush();
+    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: 'Saved Google sign-ins were cleared. Sign in to choose an account for Clips.' };
+    flowAccountResetInProgress = false;
+    publishSnapshot();
+  })().catch((error: unknown) => {
+    flowAccountResetInProgress = false;
+    flowAccountResetPromise = null;
+    const message = error instanceof Error ? error.message : 'Saved Google accounts could not be cleared.';
+    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: `Clips could not reset saved Google sign-ins: ${message}` };
+    publishSnapshot();
+    throw error;
+  });
+  return flowAccountResetPromise;
+}
+
 function getSnapshot(): AppSnapshot {
   const db = mustStore();
   const settings = activeSettings();
@@ -550,7 +592,7 @@ function getSnapshot(): AppSnapshot {
   const jobs = db.all('SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC').map(jobFromRow)
     .filter((job) => MOCK_PROVIDER_ENABLED || job.provider !== 'mock');
   const accounts = db.all('SELECT * FROM accounts ORDER BY created_at ASC, rowid ASC').map(accountFromRow)
-    .filter((account) => MOCK_PROVIDER_ENABLED || (account.provider !== 'mock' && !(account.label === 'Google Flow' && account.connection === 'needs-login')));
+    .filter((account) => MOCK_PROVIDER_ENABLED || (!flowAccountResetInProgress && mustStore().setting<number>('flowAccountResetVersion', 0) >= FLOW_ACCOUNT_RESET_VERSION && account.provider !== 'mock' && !(account.label === 'Google Flow' && account.connection === 'needs-login')));
   return {
     revision: snapshotRevision,
     updatedAt: nowIso(),
@@ -1469,6 +1511,7 @@ async function readStorageSummary(): Promise<StorageSummary> {
 
 async function connectFlowProfile(profileName: string, options: { transient?: boolean } = {}): Promise<ProviderCapabilities> {
   requireFlowNotice();
+  await ensureFreshFlowSignIn();
   if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google Flow sign-in is unavailable in the local test provider.');
   capabilities = { ...capabilities, profileName, status: 'checking', detail: 'Complete Google sign-in in the Google window.' };
   publishSnapshot();
@@ -1510,9 +1553,13 @@ function registerIpc(): void {
     await shell.openExternal(LEGAL_LINKS[link]);
   });
   handle(IPC_CHANNELS.getStorageSummary, TRUSTED_NO_INPUT, readStorageSummary);
-  handle(IPC_CHANNELS.connectFlow, TRUSTED_NO_INPUT, async () => connectFlowProfile(activeFlowProfileName()));
+  handle(IPC_CHANNELS.connectFlow, TRUSTED_NO_INPUT, async () => {
+    await ensureFreshFlowSignIn();
+    return connectFlowProfile(activeFlowProfileName());
+  });
   handle(IPC_CHANNELS.addFlowAccount, TRUSTED_NO_INPUT, async () => {
     requireFlowNotice();
+    await ensureFreshFlowSignIn();
     const profileName = `clips-${randomUUID().slice(0, 8)}`;
     const accountId = flowAccountId(profileName);
     const previousSettings = activeSettings();
@@ -1534,6 +1581,7 @@ function registerIpc(): void {
   });
   handle(IPC_CHANNELS.selectFlowAccount, IpcSchema.selectFlowAccount, async ({ accountId }) => {
     requireFlowNotice();
+    await ensureFreshFlowSignIn();
     const account = mustStore().one('SELECT provider FROM accounts WHERE id = ?', [accountId]);
     if (!account || text(account, 'provider') !== 'google-flow') throw new ClipsError('NOT_FOUND', 'That Google account is not available.');
     const settings = activeSettings();
@@ -1808,6 +1856,8 @@ async function initialize(): Promise<void> {
   store = await DatabaseStore.open(path.join(userData, 'clips.sqlite'));
   await seedLocalLibrary();
   if (pruneAnonymousPendingFlowAccounts()) await mustStore().flush();
+  const freshSignIn = ensureFreshFlowSignIn();
+  void freshSignIn.catch((error: unknown) => console.warn('Google sign-in reset failed:', error));
   startFlowSignInPreparation();
   savedWindowState = await loadWindowState();
   rebuildApplicationMenu(activeSettings().locale);

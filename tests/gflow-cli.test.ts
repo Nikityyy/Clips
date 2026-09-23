@@ -32,9 +32,14 @@ describe('gflow-cli adapter data', () => {
     const auth = path.join(root, 'package-hash', 'gflow_cli', 'auth');
     try {
       await mkdir(auth, { recursive: true });
-      for (const file of ['internal_chromium.py', 'real_chrome.py']) {
-        await writeFile(path.join(auth, file), 'GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"\r\n', 'utf8');
+      const existingUrls = [
+        'https://labs.google/fx/tools/flow?hl=en',
+        'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Flabs.google%2Ffx%2Ftools%2Fflow%3Fhl%3Den',
+      ];
+      for (const [index, file] of ['internal_chromium.py', 'real_chrome.py'].entries()) {
+        await writeFile(path.join(auth, file), `GEMINI_URL = "${existingUrls[index]}"\r\n`, 'utf8');
       }
+      await expect(patchGoogleLoginSources(root)).resolves.toBe(2);
       await expect(patchGoogleLoginSources(root)).resolves.toBe(2);
       for (const file of ['internal_chromium.py', 'real_chrome.py']) {
         await expect(readFile(path.join(auth, file), 'utf8')).resolves.toContain(`GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`);
