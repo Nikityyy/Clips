@@ -861,6 +861,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .is-windows .navigation-rail button, .is-windows .phase-panel-brand button { -webkit-app-region: no-drag; }
 .is-windows .phase-panel-brand { background: var(--canvas); -webkit-app-region: drag; }
 .is-windows .workspace-toolbar { padding-right: 154px; background: var(--canvas); -webkit-app-region: drag; }
+.is-windows .context-work-panel .context-panel-heading { margin-inline: -18px; padding-inline: 18px; background: var(--canvas); }
 .is-windows .workspace-toolbar button { -webkit-app-region: no-drag; }
 @keyframes menu-enter { from { opacity: 0; transform: translateY(4px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes onboarding-visual-enter { from { opacity: .25; } to { opacity: 1; } }

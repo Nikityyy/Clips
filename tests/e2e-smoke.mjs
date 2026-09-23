@@ -175,6 +175,9 @@ try {
   assert.ok(firstAsset);
   await page.locator('.result-card-open').first().click();
   assert.equal(await page.locator('.context-work-panel').evaluate((element) => getComputedStyle(element).animationName), 'inspector-arrive', 'opening image details should ease into view');
+  await page.evaluate(() => document.documentElement.classList.add('is-windows'));
+  assert.equal(await page.locator('.context-panel-heading').evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(17, 17, 16)', 'the caption row should stay visually continuous above image details');
+  await page.evaluate(() => document.documentElement.classList.remove('is-windows'));
   await page.locator('.result-card-open').first().click();
   const characterResult = await page.evaluate(async (portraitAssetId) => window.clips.createCharacter({
     name: 'Luma',
