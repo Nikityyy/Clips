@@ -76,7 +76,7 @@ const api: ClipsApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.menuAction, handler);
   },
 
-  importFiles: () => invoke<ImportSummary>(IPC_CHANNELS.importFiles),
+  importFiles: (kind = 'media') => invoke<ImportSummary>(IPC_CHANNELS.importFiles, { kind }),
   importDroppedFiles(files) {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     return invoke<ImportSummary>(IPC_CHANNELS.importPaths, { paths });

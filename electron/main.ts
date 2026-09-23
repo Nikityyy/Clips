@@ -4,7 +4,7 @@ import { promises as fs, createReadStream, existsSync, openSync, readSync, close
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { GFlowCli, isFlowSignInCancelled, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
+import { GFlowCli, isFlowSessionMissing, isFlowSignInCancelled, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { DatabaseStore } from './database';
@@ -272,9 +272,17 @@ function handle<Input, Output>(
     try {
       assertTrustedSender(event);
       const parsed = schema.safeParse(rawInput);
-      if (!parsed.success) return { ok: false, error: { code: 'INVALID_INPUT', message: 'Those details are not valid.' } };
+      if (!parsed.success) {
+        if (!app.isPackaged && (channel === IPC_CHANNELS.updateSettings || channel === IPC_CHANNELS.saveDraft)) {
+          console.warn(`[Clips] ${channel === IPC_CHANNELS.saveDraft ? 'Draft save' : 'Settings update'} rejected by IPC validation:`, parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), code: issue.code })));
+        }
+        return { ok: false, error: { code: 'INVALID_INPUT', message: 'Those details are not valid.' } };
+      }
       return result(await action(parsed.data));
     } catch (error) {
+      if (!app.isPackaged && (channel === IPC_CHANNELS.updateSettings || channel === IPC_CHANNELS.saveDraft)) {
+        console.warn(`[Clips] ${channel === IPC_CHANNELS.saveDraft ? 'Draft save' : 'Settings update'} failed:`, error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      }
       return errorResult(error);
     }
   });
@@ -1518,8 +1526,34 @@ async function connectFlowProfile(profileName: string, options: { transient?: bo
   capabilities = { ...capabilities, profileName, status: 'checking', detail: '' };
   publishSnapshot();
   try {
-    await flowCli.login(profileName);
-    const email = await flowCli.verifySession(profileName);
+    let profiles = await flowCli.profiles();
+    let profile = profiles.find((candidate) => candidate.name === profileName);
+    let email = profile?.google_account ?? '';
+    if (profile?.cookies_present) {
+      const verifyStartedAt = Date.now();
+      try {
+        email = await flowCli.verifySession(profileName) || email;
+        if (!app.isPackaged) console.info(`[Clips] Existing Flow session verified in ${Date.now() - verifyStartedAt} ms.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isFlowSessionMissing(message)) throw error;
+        const loginStartedAt = Date.now();
+        await flowCli.login(profileName);
+        if (!app.isPackaged) console.info(`[Clips] Flow login completed in ${Date.now() - loginStartedAt} ms.`);
+        // A successful `gflow auth login` already verifies the session before
+        // exiting. Read the resulting account label from local profile metadata.
+        profiles = await flowCli.profiles().catch(() => []);
+        email = profiles.find((candidate) => candidate.name === profileName)?.google_account ?? email;
+      }
+    } else {
+      const loginStartedAt = Date.now();
+      await flowCli.login(profileName);
+      if (!app.isPackaged) console.info(`[Clips] Flow login completed in ${Date.now() - loginStartedAt} ms.`);
+      // A successful `gflow auth login` already verifies the session before
+      // exiting. Read the resulting account label from local profile metadata.
+      profiles = await flowCli.profiles().catch(() => []);
+      email = profiles.find((candidate) => candidate.name === profileName)?.google_account ?? email;
+    }
     let connected: ProviderCapabilities = { ...capabilities, profileName, status: 'ready', detail: 'Google Flow is connected through gflow-cli.' };
     if (connected.models.length === 0) {
       connected = buildFlowCapabilities(await flowCli.catalog(), profileName, 'ready', connected.detail);
@@ -1615,11 +1649,19 @@ function registerIpc(): void {
     if (error) throw new ClipsError('STORAGE_ERROR', 'Clips could not open its local data folder.');
   });
 
-  handle(IPC_CHANNELS.importFiles, TRUSTED_NO_INPUT, async () => {
+  handle(IPC_CHANNELS.importFiles, IpcSchema.importFiles, async ({ kind }) => {
+    const imagesOnly = kind === 'image';
     const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Add media to Clips',
+      title: imagesOnly
+        ? activeSettings().locale === 'de' ? 'Referenzbilder auswählen' : 'Choose reference images for Clips'
+        : activeSettings().locale === 'de' ? 'Medien zu Clips hinzufügen' : 'Add media to Clips',
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Images and video', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'mp4', 'mov', 'webm'] }],
+      filters: [{
+        name: imagesOnly
+          ? activeSettings().locale === 'de' ? 'Bilder' : 'Images'
+          : activeSettings().locale === 'de' ? 'Bilder und Videos' : 'Images and video',
+        extensions: imagesOnly ? ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'] : ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'mp4', 'mov', 'webm'],
+      }],
     });
     return importPaths(selection.filePaths, importContext('import'));
   });

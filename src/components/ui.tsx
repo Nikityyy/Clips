@@ -202,11 +202,12 @@ export interface MenuSelectOption {
   imageUrl?: string;
 }
 
-export function MenuSelect({ value, options, label, onChange, className = '', disabled = false }: {
+export function MenuSelect({ value, options, label, onChange, id: controlId, className = '', disabled = false }: {
   value: string;
   options: MenuSelectOption[];
   label: string;
   onChange: (value: string) => void;
+  id?: string;
   className?: string;
   disabled?: boolean;
 }) {
@@ -279,7 +280,7 @@ export function MenuSelect({ value, options, label, onChange, className = '', di
   </div> : null;
 
   return <div ref={root} className={`menu-select ${className} ${open ? 'is-open' : ''}`}>
-    <button ref={trigger} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => { if (!open) setPortalHost(root.current?.closest('dialog') ?? document.body); setOpen((current) => !current); }}>
+    <button ref={trigger} id={controlId} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => { if (!open) setPortalHost(root.current?.closest('dialog') ?? document.body); setOpen((current) => !current); }}>
       {selected?.imageUrl ? <img src={selected.imageUrl} alt="" /> : null}
       <span className="menu-select-copy"><strong>{selected?.label ?? label}</strong>{selected?.description ? <small>{selected.description}</small> : null}</span>
       <ChevronDown size={15} aria-hidden="true" />

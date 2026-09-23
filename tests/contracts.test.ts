@@ -32,12 +32,35 @@ describe('renderer-to-main contracts', () => {
     }
   });
 
+  it('accepts generation draft saves without account-selection fields', () => {
+    const payload = {
+      mode: 'image',
+      draft: {
+        prompt: 'A quiet portrait in window light.',
+        characterId: null,
+        referenceAssetIds: [],
+        modelId: 'nano2',
+        aspectRatio: '3:4',
+        outputCount: 1,
+        sourceImageId: null,
+      },
+    };
+    expect(IpcSchema.saveDraft.safeParse(payload).success).toBe(true);
+    expect(IpcSchema.saveDraft.safeParse({ ...payload, selectFlowAccount: { accountId: 'account_1' } }).success).toBe(false);
+  });
+
   it('accepts only normalized locale and settings values', () => {
     expect(IpcSchema.settingsPatch.safeParse({ locale: 'de', outputCount: 2 }).success).toBe(true);
     expect(IpcSchema.settingsPatch.safeParse({ imageModelId: 'google/nano-banana:2@preview' }).success).toBe(true);
     expect(IpcSchema.settingsPatch.safeParse({ locale: 'fr' }).success).toBe(false);
     expect(IpcSchema.settingsPatch.safeParse({ outputCount: 0 }).success).toBe(false);
     expect(IpcSchema.settingsPatch.safeParse({ imageModelId: 'invalid model id' }).success).toBe(false);
+  });
+
+  it('accepts both image-only and general media file-dialog requests', () => {
+    expect(IpcSchema.importFiles.safeParse({ kind: 'image' }).success).toBe(true);
+    expect(IpcSchema.importFiles.safeParse({ kind: 'media' }).success).toBe(true);
+    expect(IpcSchema.importFiles.safeParse({ kind: 'video' }).success).toBe(false);
   });
 
   it('limits import batches and rejects path payloads with unexpected fields', () => {

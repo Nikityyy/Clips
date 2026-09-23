@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GOOGLE_LOGIN_ENTRY_URL, parseFlowCatalog, parseFlowProfiles, parseFlowVerifiedAccount, isFlowSignInCancelled, parseGenerationPaths, patchGoogleLoginSources, UV_BUILDS } from '../electron/gflow-cli';
+import { GOOGLE_LOGIN_ENTRY_URL, parseFlowCatalog, parseFlowProfiles, parseFlowVerifiedAccount, isFlowSessionMissing, isFlowSignInCancelled, parseGenerationPaths, patchGoogleLoginSources, UV_BUILDS } from '../electron/gflow-cli';
 
 const catalog = JSON.stringify({
   image: {
@@ -98,9 +98,16 @@ describe('gflow-cli adapter data', () => {
     expect(isFlowSignInCancelled('Google Flow sign-in could not be completed because the network failed.')).toBe(false);
   });
 
+  it('distinguishes a missing Flow session from verification/network failures', () => {
+    expect(isFlowSessionMissing('No sign-in detected. Run gflow auth login.')).toBe(true);
+    expect(isFlowSessionMissing('Signed in to Google, but not to the Flow app.')).toBe(true);
+    expect(isFlowSessionMissing('Could not verify the Flow session.')).toBe(false);
+  });
+
   it('preserves the complete verified Google email address', () => {
     expect(parseFlowVerifiedAccount('\u001b[32mFlow session verified as person@gmail.com\u001b[0m\n')).toBe('person@gmail.com');
     expect(parseFlowVerifiedAccount('Flow session verified')).toBe('');
+    expect(parseFlowVerifiedAccount('Flow session verified as person@gmail.com.')).toBe('person@gmail.com');
     expect(parseFlowVerifiedAccount('Authentication credential missing')).toBeNull();
   });
 

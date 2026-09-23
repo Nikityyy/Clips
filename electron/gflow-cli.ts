@@ -128,12 +128,16 @@ export function isFlowSignInCancelled(message: string): boolean {
     || /(?:sign[ -]?in|login).{0,40}(?:cancelled|canceled|closed)|(?:cancelled|canceled|closed).{0,40}(?:sign[ -]?in|login)/i.test(message);
 }
 
+export function isFlowSessionMissing(message: string): boolean {
+  return /No sign-in detected|Signed in to Google, but not to the Flow app|missing its Chrome-strategy marker/i.test(message);
+}
+
 export function parseFlowVerifiedAccount(output: string): string | null {
   // gflow-cli may add Rich terminal colors around its status text.
   // oxlint-disable-next-line no-control-regex -- Strip terminal color sequences before parsing the stable status line.
   const clean = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
   const verified = clean.match(/Flow session verified(?: as ([^\r\n]+))?/i);
-  return verified ? verified[1]?.trim() || '' : null;
+  return verified ? verified[1]?.trim().replace(/\.$/, '') || '' : null;
 }
 
 export function parseFlowProfiles(json: string): FlowProfile[] {

@@ -208,11 +208,11 @@ export function ClipsApp() {
     return summary.imported;
   }, [announce, locale]);
 
-  const importFiles = useCallback(async () => {
+  const importFiles = useCallback(async (kind: 'image' | 'media' = 'media') => {
     if (!window.clips) return [] as Asset[];
     setPending('import');
     try {
-      const result = await window.clips.importFiles();
+      const result = await window.clips.importFiles(kind);
       if (result.ok) return handleImportSummary(result.data);
       announce(translate(locale, errorCopy[result.error.code]), 'error');
     } catch {
@@ -608,7 +608,7 @@ export function ClipsApp() {
       : view === 'profile'
         ? <AccountsWorkspace snapshot={snapshot} onConnectFlow={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} onLogout={() => void logoutFlow()} busy={Boolean(pending)} t={t} />
         : view === 'characters'
-          ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
+          ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onImportImages={() => importFiles('image')} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
           : view === 'queue'
             ? <QueueWorkspace snapshot={snapshot} busyJobId={pending.startsWith('job:') ? pending.slice(4) : null} t={t} onCreate={() => setView('create')} onRetry={(job) => void retryGenerationJob(job)} onCancel={(job) => void cancelGenerationJob(job)} onReuse={reuseJobSettings} onSelectAsset={(asset) => setSelectedAssetId(asset.id)} />
             : <LibraryWorkspace snapshot={snapshot} kind={libraryKind} locale={locale} t={t} busy={Boolean(pending)} onKind={setLibraryKind} onImport={() => void importFiles()} onPaste={() => void pasteClipboardImage()} onDrop={(files) => void importDroppedFiles(files)} onReveal={(asset) => void revealAsset(asset)} onDelete={(asset) => void removeAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onAssign={(assetIds, characterId) => void assignAssets(assetIds, characterId)} />;

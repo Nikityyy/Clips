@@ -277,7 +277,7 @@ export interface ClipsApi {
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
   subscribeMenuAction(listener: (action: NativeMenuAction) => void): () => void;
 
-  importFiles(): Promise<Result<ImportSummary>>;
+  importFiles(kind?: 'image' | 'media'): Promise<Result<ImportSummary>>;
   importDroppedFiles(files: readonly File[]): Promise<Result<ImportSummary>>;
   pasteClipboardImage(): Promise<Result<ImportSummary>>;
 
@@ -319,10 +319,10 @@ export const IpcSchema = {
   mode: z.enum(['image', 'video']),
   selectFlowAccount: z.object({ accountId: entityId }).strict(),
   locale: localeSchema,
+  importFiles: z.object({ kind: z.enum(['image', 'media']) }).strict(),
   importPaths: z.object({ paths: z.array(z.string().min(1).max(4096)).max(20) }).strict(),
   saveDraft: z.object({
     mode: z.enum(['image', 'video']),
-  selectFlowAccount: z.object({ accountId: entityId }).strict(),
     draft: z.object({
       prompt: z.string().max(20000),
       characterId: entityId.nullable(),
