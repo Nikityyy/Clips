@@ -153,11 +153,13 @@ export function TooltipLayer() {
       const current = findTarget(event.target);
       if (current && document.activeElement !== current) dismiss();
     };
+    const onClick = () => dismiss();
     const reposition = () => { if (targetRef.current?.dataset.tooltip) place(targetRef.current, targetRef.current.dataset.tooltip); };
     document.addEventListener('pointerover', onPointerOver);
     document.addEventListener('pointerout', onPointerOut);
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
+    document.addEventListener('click', onClick);
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
     return () => {
@@ -165,6 +167,7 @@ export function TooltipLayer() {
       document.removeEventListener('pointerout', onPointerOut);
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('click', onClick);
       window.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition, true);
       if (timer.current) clearTimeout(timer.current);

@@ -101,6 +101,17 @@ try {
     await next.click();
   }
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
+  if (process.platform === 'win32') {
+    const titlebarLayout = await page.evaluate(() => ({
+      shellTopPadding: getComputedStyle(document.querySelector('.app-shell')).paddingTop,
+      navigationTop: document.querySelector('.navigation-rail').getBoundingClientRect().top,
+      toolbarBackground: getComputedStyle(document.querySelector('.workspace-toolbar')).backgroundColor,
+      shellBackground: getComputedStyle(document.querySelector('.app-shell')).backgroundColor,
+    }));
+    assert.equal(titlebarLayout.shellTopPadding, '42px', 'Windows content should begin below the native caption controls');
+    assert.equal(titlebarLayout.navigationTop, 42, 'the navigation rail should not sit underneath the caption controls');
+    assert.equal(titlebarLayout.toolbarBackground, titlebarLayout.shellBackground, 'the app toolbar should match the Windows caption-control background');
+  }
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
 
@@ -124,6 +135,9 @@ try {
   const tooltipBounds = await tooltip.boundingBox();
   const viewportBounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   assert.ok(tooltipBounds && tooltipBounds.x >= 0 && tooltipBounds.y >= 0 && tooltipBounds.x + tooltipBounds.width <= viewportBounds.width && tooltipBounds.y + tooltipBounds.height <= viewportBounds.height, 'custom tooltips should remain fully within the app window');
+  await libraryButton.click();
+  await tooltip.waitFor({ state: 'hidden' });
+  await page.locator('.rail-nav-item').nth(0).click();
   assert.equal(await page.locator('.context-panel').count(), 0, 'the empty inspector should not take space until an asset is selected');
   const nativeMenu = await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => item.label) ?? []);
   if (process.platform === 'win32') assert.deepEqual(nativeMenu, [], 'Windows should use the clean title bar without a File/Edit/View menu');
@@ -226,6 +240,78 @@ try {
   await page.screenshot({ path: path.join(screenshotDirectory, 'clips-settings-narrow.png'), fullPage: true });
   await page.setViewportSize({ width: 1520, height: 959 });
 
+  if (await page.locator('.toast').count()) await page.locator('.toast button').last().click();
+
+  const pageRoutes = [
+    ['create', () => page.locator('.rail-nav-item').nth(0).click()],
+    ['characters', () => page.locator('.rail-nav-item').nth(1).click()],
+    ['library', () => page.locator('.rail-nav-item').nth(2).click()],
+    ['queue', () => page.locator('.rail-nav-item').nth(3).click()],
+    ['accounts', () => page.locator('.toolbar-account').click()],
+    ['settings', () => page.locator('.rail-footer .icon-button').click()],
+  ];
+  const monitorSizes = [
+    { width: 360, height: 760 },
+    { width: 600, height: 800 },
+    { width: 860, height: 900 },
+    { width: 1160, height: 900 },
+    { width: 1360, height: 900 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+  ];
+  for (const size of monitorSizes) {
+    await page.setViewportSize(size);
+    for (const [route, open] of pageRoutes) {
+      await open();
+      const layout = await page.evaluate(() => {
+        const workspace = document.querySelector('.workspace-content');
+        const heading = document.querySelector('.workspace-toolbar-title h1');
+        const unnamedButtons = [...document.querySelectorAll('button')].filter((element) => element.getClientRects().length && !element.getAttribute('aria-label') && !element.innerText.trim() && !element.getAttribute('title'));
+        const undersizedText = [...document.querySelectorAll('body *')].filter((element) => element.children.length === 0 && element.innerText?.trim() && element.getClientRects().length && Number.parseFloat(getComputedStyle(element).fontSize) < 10.5).map((element) => ({ text: element.innerText.trim().slice(0, 45), size: getComputedStyle(element).fontSize }));
+        return {
+          heading: heading?.textContent?.trim(),
+          viewportWidth: document.documentElement.clientWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          workspaceWidth: workspace?.clientWidth,
+          workspaceContentWidth: workspace?.scrollWidth,
+          unnamedButtons: unnamedButtons.map((element) => element.outerHTML.slice(0, 140)),
+          undersizedText,
+          quietTextContrast: (() => {
+            const colors = ['--quiet', '--surface'].map((token) => getComputedStyle(document.documentElement).getPropertyValue(token).trim());
+            const luminances = colors.map((value) => {
+              const channels = [0, 2, 4].map((offset) => Number.parseInt(value.slice(offset + 1, offset + 3), 16) / 255).map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+              return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
+            });
+            return (Math.max(...luminances) + .05) / (Math.min(...luminances) + .05);
+          })(),
+        };
+      });
+      assert.ok(layout.heading, `${route} should expose a page heading at ${size.width}px`);
+      assert.ok(layout.documentWidth <= layout.viewportWidth + 1, `${route} document overflows at ${size.width}px: ${JSON.stringify(layout)}`);
+      assert.ok((layout.workspaceContentWidth ?? 0) <= (layout.workspaceWidth ?? 0) + 2, `${route} content overflows horizontally at ${size.width}px: ${JSON.stringify(layout)}`);
+      assert.deepEqual(layout.unnamedButtons, [], `${route} has buttons without accessible names at ${size.width}px: ${JSON.stringify(layout.unnamedButtons)}`);
+      assert.deepEqual(layout.undersizedText, [], `${route} has text below 10.5px at ${size.width}px: ${JSON.stringify(layout.undersizedText)}`);
+      assert.ok(layout.quietTextContrast >= 4.5, `${route} muted text contrast is below WCAG AA at ${size.width}px: ${layout.quietTextContrast}`);
+      if (route === 'create' && size.width === 360) {
+        await page.locator('.reference-actions .picker-select-button').click();
+        const mobilePicker = page.locator('.asset-picker-modal');
+        const pickerBounds = await mobilePicker.boundingBox();
+        assert.ok(pickerBounds && pickerBounds.x >= 0 && pickerBounds.y >= 0 && pickerBounds.x + pickerBounds.width <= size.width && pickerBounds.y + pickerBounds.height <= size.height, `the reference picker should fit on a 360px screen: ${JSON.stringify(pickerBounds)}`);
+        await mobilePicker.locator('.picker-confirm-button').click();
+      }
+      const rail = page.locator('.navigation-rail');
+      const railBefore = await rail.boundingBox();
+      await page.locator('.workspace-content').evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      const railAfter = await rail.boundingBox();
+      assert.ok(railBefore && railAfter && Math.abs(railAfter.y - railBefore.y) < 1, `${route} navigation rail should stay anchored while page content scrolls at ${size.width}px`);
+      await page.locator('.workspace-content').evaluate((element) => { element.scrollTop = 0; });
+      if ([360, 860, 1360, 2560].includes(size.width)) {
+        await page.screenshot({ path: path.join(screenshotDirectory, `layout-${route}-${size.width}.png`) });
+      }
+    }
+  }
+  await page.setViewportSize({ width: 1520, height: 959 });
+
   assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
   const expectedWindowBounds = await app.evaluate(({ BrowserWindow, screen }) => {
     const area = screen.getPrimaryDisplay().workArea;
@@ -256,7 +342,7 @@ try {
   assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.prompt.startsWith('A quiet figure')));
   assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.kind === 'video' && job.inputAssetIds.length === 1));
   assert.deepEqual(rendererErrors, [], `renderer errors: ${rendererErrors.join('; ')}`);
-  console.log('Desktop e2e smoke test passed: empty first-run workspace, animated setup, local generations, portrait-backed characters, reference picker, localization, and window restore.');
+  console.log('Desktop e2e smoke test passed: first-run setup, local generations, reference selection, localization, accessibility basics, fixed navigation, and all six pages across seven viewport widths.');
 } finally {
   if (app) await app.close().catch(() => undefined);
   await rm(userData, { recursive: true, force: true });
