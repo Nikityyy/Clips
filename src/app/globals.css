@@ -209,6 +209,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
 .modal-scrim { position: fixed; inset: 0; z-index: 40; display: grid; width: auto; max-width: none; height: auto; max-height: none; place-items: center; overflow: auto; margin: 0; padding: 22px; border: 0; background: transparent; color: inherit; }
 .modal-scrim::backdrop { background: rgb(7 7 7 / .77); }
+.modal-scrim.modal-focus-surface { outline: none; }
+.modal-scrim.modal-focus-surface:focus { outline: none; }
 .modal-panel { position: relative; inset: auto; display: flex; width: min(100%, 550px); max-height: min(88dvh, 820px); flex-direction: column; overflow: hidden; margin: 0; padding: 0; border: 1px solid #494844; background: #191918; color: var(--bone); box-shadow: 0 25px 80px rgb(0 0 0 / .45); animation: modal-enter .25s var(--ease-out) both; }
 .modal-panel.modal-wide { width: min(100%, 790px); }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; padding: 25px 27px 16px; }
@@ -875,6 +877,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .account-privacy-note svg { flex: 0 0 auto; margin-top: 2px; }
 .account-privacy-note p { margin: 0; font-size: 12px; line-height: 1.65; }
 
+.is-windows .window-drag-region { position: absolute; z-index: 2; inset: 0 154px auto 0; display: block; height: 42px; -webkit-app-region: drag; }
+.is-windows .modal-panel { z-index: 3; -webkit-app-region: no-drag; }
 .is-windows .navigation-rail { background: var(--canvas); -webkit-app-region: drag; }
 .is-windows .navigation-rail button, .is-windows .phase-panel-brand button { -webkit-app-region: no-drag; }
 .is-windows .phase-panel-brand { background: var(--canvas); -webkit-app-region: drag; }
@@ -947,7 +951,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
 
 /* Calm, fixed first-run checkpoints with explicit progress and consent. */
-.startup-screen { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: #10100f; }
+.startup-screen { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: var(--canvas); }
+dialog.modal-scrim:has(.onboarding-modal, .startup-gate)::backdrop { background: transparent; }
+.window-drag-region { display: none; }
 .startup-gate { width: min(660px, 94vw); height: auto; min-height: 0; max-height: min(760px, 92dvh); }
 .startup-gate .modal-header { min-height: 0; padding-bottom: 13px; }
 .startup-gate .modal-content { gap: 18px; }
@@ -965,6 +971,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .startup-login-icon { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border: 1px solid #595850; border-radius: 50%; color: var(--bone); }
 .startup-login-card strong { font-size: 14px; font-weight: 550; }
 .startup-login-card p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.startup-switch-account { margin-top: 8px; }
 .startup-error { margin: 0; color: #f0a59a; font-size: 12px; line-height: 1.5; }
 @media (max-width: 600px) { .startup-screen { padding: 8px; } .startup-footer { align-items: stretch; flex-direction: column; } .startup-footer .button { width: 100%; } .startup-footer > span { max-width: none; } .startup-gate { max-height: 96dvh; } }
 

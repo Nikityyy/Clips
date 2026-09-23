@@ -36,7 +36,7 @@ export function IconButton({ label, icon: Icon, active, size = 'normal', classNa
   );
 }
 
-export function Modal({ title, description, onClose, children, footer, wide = false, labelledBy, closeLabel, className = '', transitionKey, dismissible = true }: {
+export function Modal({ title, description, onClose, children, footer, wide = false, labelledBy, closeLabel, className = '', transitionKey, dismissible = true, draggableTitlebar = false, focusSurface = false }: {
   title: string;
   description?: string;
   onClose: () => void;
@@ -48,6 +48,8 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
   className?: string;
   transitionKey?: string | number;
   dismissible?: boolean;
+  draggableTitlebar?: boolean;
+  focusSurface?: boolean;
 }) {
   const panel = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -55,10 +57,10 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
     if (!modal) return;
     if (!modal.open) modal.showModal();
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const initialFocus = panel.current?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')
+    const initialFocus = focusSurface ? null : panel.current?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')
       ?? panel.current?.querySelector<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])');
     if (initialFocus) initialFocus.focus();
-    else panel.current?.focus();
+    else panel.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || !panel.current) return;
       const focusable = [...panel.current.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -80,10 +82,11 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
       if (modal.open) modal.close();
       previous?.focus();
     };
-  }, []);
+  }, [focusSurface]);
 
   return (
-    <dialog ref={panel} className="modal-scrim" aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1} onCancel={(event) => { event.preventDefault(); if (dismissible) onClose(); }}>
+    <dialog ref={panel} className={`modal-scrim${focusSurface ? ' modal-focus-surface' : ''}`} aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1} onCancel={(event) => { event.preventDefault(); if (dismissible) onClose(); }}>
+      {draggableTitlebar ? <div className="window-drag-region" aria-hidden="true" /> : null}
       <div className={`modal-panel ${wide ? 'modal-wide' : ''} ${className}`}>
         <header className="modal-header">
           <div key={transitionKey} className="min-width-zero">

@@ -12,7 +12,7 @@ const screenshotDirectory = path.join(root, 'test-results');
 const rendererErrors = [];
 await mkdir(screenshotDirectory, { recursive: true });
 
-async function launchApp() {
+async function launchApp(forceOnboarding = false) {
   return electron.launch({
     args: [path.join(root, 'out-electron', 'electron', 'main.js')],
     cwd: root,
@@ -24,6 +24,7 @@ async function launchApp() {
       CLIPS_TEST_USER_DATA: userData,
       CLIPS_TEST_MEDIA_DIRECTORY: fixtureDirectory,
       CLIPS_RENDERER_URL: 'http://localhost:3000',
+      CLIPS_FORCE_ONBOARDING: forceOnboarding ? '1' : '',
     },
   });
 }
@@ -63,6 +64,22 @@ try {
   assert.equal(await page.evaluate(() => document.fonts.check('500 14px "Manrope Variable"')), true, 'the app should load the bundled Manrope variable font');
   assert.equal(await page.locator('.onboarding-visual').count(), 1, 'the first-run introduction should open with its animated visual preview');
   assert.equal(await page.title(), 'Clips');
+  const onboardingChrome = await page.evaluate(() => ({
+    windows: document.documentElement.classList.contains('is-windows'),
+    dragDisplay: getComputedStyle(document.querySelector('.window-drag-region')).display,
+    dragRegion: getComputedStyle(document.querySelector('.window-drag-region')).webkitAppRegion,
+    focusedElement: document.activeElement?.tagName,
+    focusOutline: getComputedStyle(document.activeElement).outlineStyle,
+    backdrop: getComputedStyle(document.querySelector('dialog'), '::backdrop').backgroundColor,
+    pageBackground: getComputedStyle(document.body).backgroundColor,
+  }));
+  if (onboardingChrome.windows) {
+    assert.equal(onboardingChrome.dragDisplay, 'block', 'the Windows onboarding title strip should be visible');
+    assert.equal(onboardingChrome.dragRegion, 'drag', 'the Windows onboarding title strip should move the app window');
+  }
+  assert.equal(onboardingChrome.focusedElement, 'DIALOG', 'opening onboarding should not autofocus a button and show a white ring');
+  assert.equal(onboardingChrome.focusOutline, 'none', 'the onboarding dialog itself should not draw a focus border');
+  assert.equal(onboardingChrome.backdrop, 'rgba(0, 0, 0, 0)', 'onboarding should not darken the canvas beneath the Windows title controls');
 
   const onboarding = page.getByRole('dialog');
   const language = onboarding.getByRole('button', { name: 'Language' });
@@ -360,7 +377,14 @@ try {
   assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.prompt.startsWith('A quiet figure')));
   assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.kind === 'video' && job.inputAssetIds.length === 1));
   assert.deepEqual(rendererErrors, [], `renderer errors: ${rendererErrors.join('; ')}`);
-  console.log('Desktop e2e smoke test passed: first-run setup, local generations, reference selection, localization, accessibility basics, fixed navigation, and all six pages across seven viewport widths.');
+  await app.close();
+  app = await launchApp(true);
+  const replayPage = await app.firstWindow();
+  monitorRenderer(replayPage);
+  await replayPage.getByRole('heading', { name: /Bilder und Clips|Make images and clips/ }).waitFor();
+  assert.equal(await replayPage.locator('.onboarding-visual').count(), 1, 'CLIPS_FORCE_ONBOARDING should replay the welcome introduction even after completion');
+  assert.deepEqual(rendererErrors, [], `renderer errors after replay: ${rendererErrors.join('; ')}`);
+  console.log('Desktop e2e smoke test passed: onboarding replay and window chrome, first-run setup, local generations, reference selection, localization, accessibility basics, fixed navigation, and all six pages across seven viewport widths.');
 } finally {
   if (app) await app.close().catch(() => undefined);
   await rm(userData, { recursive: true, force: true });

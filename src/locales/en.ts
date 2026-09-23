@@ -337,6 +337,8 @@ const en = {
   'startup.loginBody': 'A private browser opens directly to Google sign-in, then returns to Flow. When the connection is ready, you return to Clips. Create and manage your work here.',
   'startup.loginPrivacy': 'The connector and its private browser profile stay in your Clips data folder. Nothing is installed system-wide. Prompts and references are sent to Flow only when you create something.',
   'startup.loginAction': 'Sign in with Google',
+  'startup.loginSavedAccount': 'Continue with saved account',
+  'startup.useAnotherAccount': 'Use a different Google account',
   'startup.loginBusy': 'Preparing secure sign-in…',
   'startup.loginError': 'Sign-in did not finish. Check your connection and try again.',
   'startup.localAction': 'Continue with local test mode',

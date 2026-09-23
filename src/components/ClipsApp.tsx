@@ -51,6 +51,7 @@ export function ClipsApp() {
   const [createMode, setCreateMode] = useState<JobKind>('image');
   const [drafts, setDrafts] = useState<AppSnapshot['settings']['drafts'] | null>(null);
   const draftsInitialized = useRef(false);
+  const onboardingResetConsumed = useRef(false);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locale: Locale = snapshot?.settings.locale ?? 'en';
@@ -70,6 +71,12 @@ export function ClipsApp() {
       return;
     }
     try {
+      const forceOnboarding = !onboardingResetConsumed.current && new URLSearchParams(window.location.search).get('clips-reset-onboarding') === '1';
+      onboardingResetConsumed.current = true;
+      if (forceOnboarding) {
+        localStorage.removeItem('clips-welcome-complete');
+        localStorage.removeItem('clips-onboarding-complete');
+      }
       const result = await window.clips.getSnapshot();
       if (!result.ok) {
         setLoadError(true);
@@ -83,7 +90,7 @@ export function ClipsApp() {
         localStorage.setItem('clips-locale-initialized', 'true');
       }
       setSnapshot((current) => current && current.revision > data.revision ? current : data);
-      if (!localStorage.getItem('clips-welcome-complete')) setWelcomeStep(0);
+      if (forceOnboarding || !localStorage.getItem('clips-welcome-complete')) setWelcomeStep(0);
     } catch {
       setLoadError(true);
     }
@@ -638,7 +645,7 @@ function TermsGate({ checked, error, busy, onChecked, onAccept, t }: {
     ['flow-terms', 'startup.flowTerms'],
     ['gflow-disclaimer', 'startup.connectorDisclaimer'],
   ] as const;
-  return <div className="startup-screen"><Modal title={t('startup.termsTitle')} description={t('startup.termsBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate" footer={<div className="startup-footer"><span>{t('startup.required')}</span><Button variant="primary" icon={ShieldCheck} busy={busy} disabled={!checked} onClick={onAccept}>{t('startup.continueToLogin')}</Button></div>}>
+  return <div className="startup-screen"><Modal title={t('startup.termsTitle')} description={t('startup.termsBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate" draggableTitlebar focusSurface footer={<div className="startup-footer"><span>{t('startup.required')}</span><Button variant="primary" icon={ShieldCheck} busy={busy} disabled={!checked} onClick={onAccept}>{t('startup.continueToLogin')}</Button></div>}>
     <div className="startup-legal-links">{legalLinks.map(([link, key]) => <button type="button" key={link} onClick={() => void window.clips?.openLegalLink(link)}>{t(key)}<ExternalLink size={13} aria-hidden="true" /></button>)}</div>
     <label className="startup-consent"><input type="checkbox" checked={checked} onChange={(event) => onChecked(event.currentTarget.checked)} /><span>{t('startup.termsCheckbox')}</span></label>
     <p className="startup-legal-limit">{t('startup.legalNote')}</p>
@@ -659,8 +666,9 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
 }) {
   const local = status === 'mock-ready';
   const accounts = snapshot.accounts.filter((item) => item.provider === 'google-flow');
-  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy && status !== 'checking'} disabled={busy || status === 'checking'} onClick={onConnect}>{t(local ? 'startup.localAction' : 'startup.loginAction')}</Button></div>}>
-    <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{local ? t('account.localTitle') : snapshot.accounts.find((item) => item.id === snapshot.settings.activeAccountId)?.label ?? t('account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
+  const activeAccount = accounts.find((item) => item.id === snapshot.settings.activeAccountId);
+  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" draggableTitlebar focusSurface footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy && status !== 'checking'} disabled={busy || status === 'checking'} onClick={onConnect}>{t(local ? 'startup.localAction' : activeAccount ? 'startup.loginSavedAccount' : 'startup.loginAction')}</Button></div>}>
+    <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{local ? t('account.localTitle') : activeAccount?.label ?? t('account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
     {!local && accounts.length > 1 ? <div className="startup-account-options" aria-label={t('account.savedAccounts')}>
       {accounts.map((account) => {
         const active = account.id === snapshot.settings.activeAccountId;
@@ -669,7 +677,7 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
         </button>;
       })}
     </div> : null}
-    {!local && accounts.length > 1 ? <Button size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('account.addAccount')}</Button> : null}
+    {!local && activeAccount ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
     {error ? <p className="startup-error" role="alert">{error}</p> : null}
   </Modal></div>;
 }
@@ -698,7 +706,7 @@ function Onboarding({ step, locale, onStep, onDone, onLocale, t }: {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [current, next, previous]);
   return (
-    <Modal title={t(titles[current])} description={t(bodies[current])} onClose={onDone} closeLabel={t('common.close')} wide labelledBy="onboarding-title" className="onboarding-modal" transitionKey={current} footer={
+    <Modal title={t(titles[current])} description={t(bodies[current])} onClose={onDone} closeLabel={t('common.close')} wide labelledBy="onboarding-title" className="onboarding-modal" transitionKey={current} draggableTitlebar focusSurface footer={
       <div className="onboarding-footer">
         <div className="onboarding-language"><span>{t('onboarding.language')}</span><MenuSelect label={t('onboarding.language')} value={locale} options={[{ value: 'en', label: t('settings.english') }, { value: 'de', label: t('settings.german') }]} onChange={(value) => onLocale(value as Locale)} /></div>
         <div className="onboarding-steps" aria-label={`${current + 1} / 4`}>{[0, 1, 2, 3].map((index) => <button key={index} type="button" className={index === current ? 'is-current' : index < current ? 'is-complete' : ''} aria-label={t('onboarding.goToStep', { count: index + 1 })} onClick={() => onStep(index)} />)}</div>

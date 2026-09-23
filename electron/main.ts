@@ -1350,12 +1350,15 @@ function createWindow(): void {
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
   mainWindow.on('closed', () => { mainWindow = null; });
 
+  const forceOnboarding = process.env.CLIPS_FORCE_ONBOARDING === '1';
   if (app.isPackaged) {
-    void mainWindow.loadFile(path.join(app.getAppPath(), 'out', 'index.html'));
+    const page = path.join(app.getAppPath(), 'out', 'index.html');
+    void mainWindow.loadFile(page, forceOnboarding ? { query: { 'clips-reset-onboarding': '1' } } : undefined);
   } else {
     const configuredUrl = process.env.CLIPS_RENDERER_URL ?? 'http://localhost:3000';
-    const rendererUrl = trustedRendererUrl(configuredUrl) ? configuredUrl : 'http://localhost:3000';
-    void mainWindow.loadURL(rendererUrl);
+    const rendererUrl = new URL(trustedRendererUrl(configuredUrl) ? configuredUrl : 'http://localhost:3000');
+    if (forceOnboarding) rendererUrl.searchParams.set('clips-reset-onboarding', '1');
+    void mainWindow.loadURL(rendererUrl.toString());
   }
 }
 

@@ -339,6 +339,8 @@ const de: { [K in keyof typeof en]: string } = {
   'startup.loginBody': 'Ein privates Browserfenster öffnet direkt die Google-Anmeldung und kehrt danach zu Flow zurück. Sobald die Verbindung bereit ist, kehrst du zu Clips zurück. Erstellen und Verwalten erledigst du hier.',
   'startup.loginPrivacy': 'Connector und privates Browserprofil bleiben im Clips-Datenordner. Systemweit wird nichts installiert. Prompts und Referenzen werden erst beim Erstellen an Flow gesendet.',
   'startup.loginAction': 'Mit Google anmelden',
+  'startup.loginSavedAccount': 'Mit gespeichertem Konto fortfahren',
+  'startup.useAnotherAccount': 'Anderes Google-Konto verwenden',
   'startup.loginBusy': 'Sichere Anmeldung wird vorbereitet…',
   'startup.loginError': 'Die Anmeldung wurde nicht abgeschlossen. Prüfe deine Verbindung und versuche es erneut.',
   'startup.localAction': 'Im lokalen Testmodus fortfahren',
