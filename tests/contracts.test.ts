@@ -34,8 +34,10 @@ describe('renderer-to-main contracts', () => {
 
   it('accepts only normalized locale and settings values', () => {
     expect(IpcSchema.settingsPatch.safeParse({ locale: 'de', outputCount: 2 }).success).toBe(true);
+    expect(IpcSchema.settingsPatch.safeParse({ imageModelId: 'google/nano-banana:2@preview' }).success).toBe(true);
     expect(IpcSchema.settingsPatch.safeParse({ locale: 'fr' }).success).toBe(false);
     expect(IpcSchema.settingsPatch.safeParse({ outputCount: 0 }).success).toBe(false);
+    expect(IpcSchema.settingsPatch.safeParse({ imageModelId: 'invalid model id' }).success).toBe(false);
   });
 
   it('limits import batches and rejects path payloads with unexpected fields', () => {

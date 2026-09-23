@@ -309,7 +309,10 @@ const entityId = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/);
 const nonEmpty = (max: number) => z.string().min(1).max(max).refine((value) => value.trim().length > 0);
 const localeSchema = z.enum(['en', 'de']);
 const ratioSchema = z.string().regex(/^\d{1,3}:\d{1,3}$/);
-const modelIdSchema = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_.-]+$/);
+// Model ids are opaque identifiers supplied by the active provider catalog.
+// Keep them bounded and free of whitespace/control characters; the main
+// process checks each id against the catalog before using it.
+const modelIdSchema = z.string().min(1).max(256).regex(/^\S+$/);
 
 export const IpcSchema = {
   id: entityId,
