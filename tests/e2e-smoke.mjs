@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { copyFile, cp, mkdtemp, mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
@@ -7,10 +7,10 @@ import { _electron as electron } from 'playwright';
 const root = process.cwd();
 const userData = await mkdtemp(path.join(os.tmpdir(), 'clips-e2e-'));
 const fixtureDirectory = path.join(userData, 'mock');
-await cp(path.join(root, 'public', 'media', 'mock'), fixtureDirectory, { recursive: true });
-const screenshotPath = path.join(root, 'test-results', 'foundation-desktop.png');
+await cp(path.join(root, 'fixtures', 'dev-media'), fixtureDirectory, { recursive: true });
+const screenshotDirectory = path.join(root, 'test-results');
 const rendererErrors = [];
-await mkdir(path.dirname(screenshotPath), { recursive: true });
+await mkdir(screenshotDirectory, { recursive: true });
 
 async function launchApp() {
   return electron.launch({
@@ -20,6 +20,7 @@ async function launchApp() {
     timeout: 45_000,
     env: {
       ...process.env,
+      CLIPS_TEST_PROVIDER: 'mock',
       CLIPS_TEST_USER_DATA: userData,
       CLIPS_TEST_MEDIA_DIRECTORY: fixtureDirectory,
       CLIPS_RENDERER_URL: 'http://localhost:3000',
@@ -32,25 +33,20 @@ function monitorRenderer(page) {
   page.on('console', (message) => { if (message.type() === 'error') rendererErrors.push(message.text()); });
 }
 
-async function activate(locator) {
-  await locator.focus();
-  await locator.press('Enter');
-}
-
 async function assertNoHorizontalOverflow(page) {
-  const width = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
-  assert.ok(width.content <= width.viewport + 1, `horizontal overflow at ${width.viewport}px: ${width.content}px`);
+  const size = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
+  assert.ok(size.content <= size.viewport + 1, `horizontal overflow at ${size.viewport}px: ${size.content}px`);
 }
 
-async function waitForJob(page, prompt, matches, timeout = 20_000) {
+async function waitForJob(page, prompt, predicate, timeout = 20_000) {
   const deadline = Date.now() + timeout;
   let lastStatus = 'not found';
   while (Date.now() < deadline) {
     const snapshot = await page.evaluate(async () => window.clips.getSnapshot());
     if (snapshot.ok) {
-      const job = snapshot.data.jobs.find((candidate) => candidate.prompt === prompt && matches(candidate));
-      if (job) return job;
-      lastStatus = snapshot.data.jobs.find((candidate) => candidate.prompt === prompt)?.status ?? 'not found';
+      const job = snapshot.data.jobs.find((candidate) => candidate.prompt === prompt);
+      if (job && predicate(job)) return job;
+      lastStatus = job?.status ?? 'not found';
     }
     await page.waitForTimeout(120);
   }
@@ -60,181 +56,157 @@ async function waitForJob(page, prompt, matches, timeout = 20_000) {
 let app;
 try {
   app = await launchApp();
-  let page = await app.firstWindow();
+  const page = await app.firstWindow();
   monitorRenderer(page);
   await page.getByRole('dialog').waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  assert.equal(await page.evaluate(() => document.fonts.check('500 14px "Manrope Variable"')), true, 'the app should load the bundled Manrope variable font');
+  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
+  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
   assert.equal(await page.title(), 'Clips');
-  await page.getByRole('dialog').getByRole('button', { name: 'Skip setup' }).click();
+
+  const onboarding = page.getByRole('dialog');
+  const language = onboarding.getByRole('button', { name: 'Language' });
+  await language.click();
+  const languageMenu = page.getByRole('listbox', { name: 'Language' });
+  assert.equal(await languageMenu.evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(32, 32, 31)', 'the language menu should use the app’s dark palette');
+  await languageMenu.getByRole('option', { name: 'English' }).click();
+  const introBounds = [];
+  introBounds.push(await onboarding.locator('.modal-panel').boundingBox());
+  for (let step = 0; step < 3; step += 1) {
+    await onboarding.getByRole('button', { name: 'Continue' }).click();
+    introBounds.push(await onboarding.locator('.modal-panel').boundingBox());
+  }
+  for (const bounds of introBounds.slice(1)) {
+    assert.ok(Math.abs(bounds.width - introBounds[0].width) <= 1, 'onboarding width should stay fixed between steps');
+    assert.ok(Math.abs(bounds.height - introBounds[0].height) <= 1, 'onboarding height should stay fixed between steps');
+  }
+  await onboarding.getByRole('button', { name: 'Open the studio' }).click();
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
+
+  const initial = await page.evaluate(async () => window.clips.getSnapshot());
+  assert.ok(initial.ok);
+  assert.equal(initial.data.assets.length, 0, 'new test profiles should not be preloaded with example media');
+  assert.equal(initial.data.characters.length, 0, 'new test profiles should not be preloaded with characters');
+  assert.equal(initial.data.capabilities.provider, 'mock');
+  assert.equal(await page.getByRole('button', { name: /Flow downloads/i }).count(), 0, 'generation results should stay in Clips instead of exposing a manual Flow handoff');
+  const flowConnect = await page.evaluate(() => window.clips.connectFlow());
+  assert.equal(flowConnect.ok, false, 'the Flow connect IPC should be registered even when the local test provider is active');
+  assert.equal(flowConnect.error.code, 'PROVIDER_UNAVAILABLE', 'the local test provider should report that Flow login is intentionally disabled');
+  assert.equal(await page.locator('.rail-nav-item').count(), 4);
+  assert.equal(await page.locator('.rail-nav-item[aria-label="Images"], .rail-nav-item[aria-label="Videos"]').count(), 0, 'images and videos should live under the single Library destination');
+  assert.equal(await page.locator('.rail-nav-item[aria-label="Library"]').getAttribute('title'), null, 'the navigation should use custom tooltips instead of native browser tooltips');
+  assert.ok(await page.locator('.rail-nav-item[aria-label="Library"]').getAttribute('data-tooltip'));
   assert.equal(await page.locator('.context-panel').count(), 0, 'the empty inspector should not take space until an asset is selected');
-  const readNativeMenu = () => app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => ({
-    label: item.label,
-    items: item.submenu?.items.map((child) => ({ id: child.id, label: child.label, accelerator: child.accelerator })) ?? [],
-  })) ?? []);
-  let nativeMenu = await readNativeMenu();
-  assert.ok(nativeMenu.some((item) => item.label === 'File'));
-  assert.ok(nativeMenu.find((item) => item.label === 'File')?.items.some((item) => item.id === 'clips-import-media' && item.accelerator));
-  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('clips-queue')?.click?.());
-  await page.locator('.queue-workspace').waitFor();
-  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('clips-create')?.click?.());
-  await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
-  await page.waitForFunction(() => {
-    const images = [...document.querySelectorAll('.result-card img')];
-    return images.length === 6 && images.every((image) => image.complete && image.naturalWidth > 0);
-  });
-  await page.screenshot({ path: screenshotPath, fullPage: true });
+  const nativeMenu = await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => item.label) ?? []);
+  if (process.platform === 'win32') assert.deepEqual(nativeMenu, [], 'Windows should use the clean title bar without a File/Edit/View menu');
 
   await page.getByRole('textbox', { name: 'Describe what you want to see' }).fill('A quiet figure at the edge of a sunlit room, fine grain.');
-  await activate(page.getByRole('button', { name: 'Create 4 images' }));
+  const modelPicker = page.locator('.generation-options .menu-select').first();
+  await modelPicker.getByRole('button').click();
+  await page.getByRole('listbox', { name: 'Model' }).getByRole('option', { name: 'Portrait study' }).click();
+  await page.getByRole('button', { name: 'Create 4 images' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.result-grid .result-card').length === 4, { timeout: 15_000 });
   await waitForJob(page, 'A quiet figure at the edge of a sunlit room, fine grain.', (job) => job.status === 'completed');
-  await activate(page.locator('.rail-nav-item[aria-label="Queue"]'));
-  const imageJob = page.locator('.queue-job-card').filter({ hasText: 'A quiet figure' }).first();
-  await activate(imageJob.getByRole('button', { name: 'Reuse settings' }));
-  assert.equal(await page.getByRole('textbox', { name: 'Describe what you want to see' }).inputValue(), 'A quiet figure at the edge of a sunlit room, fine grain.');
-
-  await activate(page.locator('.rail-nav-item[aria-label="Characters"]'));
-  await activate(page.getByRole('button', { name: 'New character' }));
-  await page.getByRole('textbox', { name: 'Name' }).fill('Luma');
-  await page.getByRole('textbox', { name: 'Description' }).fill('A recurring fictional subject for local studies.');
-  await page.getByRole('textbox', { name: 'Character prompt' }).fill('Short dark curls, attentive expression, soft window light.');
-  await activate(page.getByRole('button', { name: 'Save character' }));
-  await page.getByRole('heading', { name: 'Luma' }).waitFor();
-
-  await activate(page.locator('.rail-nav-item[aria-label="Library"]'));
-  const fixturePath = path.join(userData, 'e2e-reference.png');
-  await copyFile(path.join(root, 'public', 'media', 'mock', 'mara-01.png'), fixturePath);
-  await app.evaluate(({ dialog }, filePath) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] });
-  }, fixturePath);
-  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('clips-import-media')?.click?.());
-  await page.getByRole('button', { name: 'e2e-reference', exact: false }).waitFor();
-  await page.getByRole('textbox', { name: 'Search' }).fill('e2e-reference');
-  await page.waitForFunction(() => document.querySelectorAll('.library-card').length === 1);
-  await activate(page.getByRole('button', { name: 'Select' }));
-  await activate(page.getByRole('button', { name: 'Select: e2e-reference' }));
-  const imported = await page.evaluate(async () => {
-    const snapshot = await window.clips.getSnapshot();
-    return snapshot.ok ? snapshot.data.assets.find((asset) => asset.fileName === 'e2e-reference.png' && asset.provenance.source === 'import') : null;
-  });
-  assert.ok(imported, 'the fixture should be copied into the local library');
-  const snapshotBeforeAssign = await page.evaluate(async () => window.clips.getSnapshot());
-  assert.ok(snapshotBeforeAssign.ok);
-  const lumaId = snapshotBeforeAssign.data.characters.find((character) => character.name === 'Luma')?.id;
-  assert.ok(lumaId);
-  await page.getByRole('combobox', { name: 'Add to a character' }).selectOption(lumaId);
-  const snapshotAfterAssign = await page.evaluate(async () => window.clips.getSnapshot());
-  assert.ok(snapshotAfterAssign.ok);
-  assert.ok(snapshotAfterAssign.data.assets.find((asset) => asset.id === imported.id)?.provenance.characterIds.includes(lumaId));
-  await activate(page.getByRole('button', { name: 'Inspect asset: e2e-reference' }));
-  await page.getByRole('dialog', { name: 'Asset details' }).getByText('Imported', { exact: true }).waitFor();
-  await page.keyboard.press('Escape');
-
-  await activate(page.locator('.rail-nav-item[aria-label="Create"]'));
-  await activate(page.locator('.result-card').first().getByRole('button', { name: 'Create a video' }));
-  const videoPrompt = 'A slow turn toward the light, then a quiet smile.';
-  await page.getByRole('textbox', { name: 'Describe what you want to see' }).fill(videoPrompt);
-  const videoPath = path.join(fixtureDirectory, 'mock-video.mp4');
-  const heldVideoPath = path.join(userData, 'mock-video-held.mp4');
-  await rename(videoPath, heldVideoPath);
-  await activate(page.getByRole('button', { name: 'Create video' }));
-  await activate(page.locator('.rail-nav-item[aria-label="Queue"]'));
-  const failedAttempt = await waitForJob(page, videoPrompt, (job) => job.status === 'failed');
-  await rename(heldVideoPath, videoPath);
-  const failedVideo = page.locator('.queue-job-card').filter({ hasText: videoPrompt }).first();
-  await failedVideo.locator('.queue-status-pill.status-failed').waitFor({ state: 'visible', timeout: 5000 });
-  assert.equal(failedAttempt.status, 'failed');
-  await activate(failedVideo.getByRole('button', { name: 'Retry' }));
-  await waitForJob(page, videoPrompt, (job) => job.status === 'completed' && Boolean(job.retryOfJobId));
-  const videoJob = page.locator('.queue-job-card').filter({ hasText: videoPrompt }).first();
-  await activate(videoJob.locator('.queue-output-item').first());
-  await page.locator('.context-panel').waitFor();
   await page.waitForFunction(() => {
-    const video = document.querySelector('.asset-inspector-preview video');
-    return video instanceof HTMLVideoElement && video.controls && video.readyState >= 1 && video.duration > 0;
-  }, { timeout: 15_000 });
+    const images = [...document.querySelectorAll('.result-grid .result-card img')];
+    return images.length === 4 && images.every((image) => image.complete && image.naturalWidth > 0);
+  });
+  assert.equal(await page.locator('.generation-options .ratio-options button').count(), initial.data.capabilities.imageAspectRatios.length, 'all provider-supported image aspects should be shown');
+  await page.screenshot({ path: path.join(screenshotDirectory, 'clips-creation-studio.png'), fullPage: true });
 
-  await activate(page.locator('.rail-nav-item[aria-label="Create"]'));
-  await activate(page.getByRole('button', { name: 'Image', exact: true }));
-  const cancelPrompt = 'Cancel this local sample safely.';
-  await page.getByRole('textbox', { name: 'Describe what you want to see' }).fill(cancelPrompt);
-  await activate(page.getByRole('button', { name: 'Create 4 images' }));
-  await activate(page.locator('.rail-nav-item[aria-label="Queue"]'));
-  const cancelJob = page.locator('.queue-job-card').filter({ hasText: cancelPrompt }).first();
-  await activate(cancelJob.getByRole('button', { name: 'Cancel job' }));
-  await waitForJob(page, cancelPrompt, (job) => job.status === 'cancelled');
-  await page.setViewportSize({ width: 360, height: 760 });
-  await assertNoHorizontalOverflow(page);
-  await page.screenshot({ path: path.join(root, 'test-results', 'queue-narrow.png'), fullPage: true });
-
-  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('clips-settings')?.click?.());
-  await page.getByRole('combobox', { name: 'Language' }).selectOption('de');
-  await page.waitForFunction(() => document.documentElement.lang === 'de');
-  nativeMenu = await readNativeMenu();
-  assert.ok(nativeMenu.some((item) => item.label === 'Datei'));
-  assert.ok(nativeMenu.find((item) => item.label === 'Datei')?.items.some((item) => item.id === 'clips-import-media' && item.label === 'Medien importieren…'));
-  await assertNoHorizontalOverflow(page);
-  const accountsButton = page.locator('.toolbar-account[aria-label="Konten"]');
-  await activate(accountsButton);
-  await page.getByRole('textbox', { name: 'Browserprofil benennen' }).fill('E2E Flow profile');
-  await page.getByRole('textbox', { name: 'Browserprofil benennen' }).press('Enter');
-  const profile = page.locator('.account-row').filter({ hasText: 'E2E Flow profile' });
-  await activate(profile.getByRole('button', { name: 'Aktiv setzen' }));
-  await page.waitForFunction(() => document.querySelector('.toolbar-account')?.textContent?.includes('E2E Flow profile'));
-  await assertNoHorizontalOverflow(page);
-  const flowAccountId = await page.evaluate(async () => {
+  const firstAsset = await page.evaluate(async () => {
     const snapshot = await window.clips.getSnapshot();
-    return snapshot.ok ? snapshot.data.accounts.find((account) => account.label === 'E2E Flow profile')?.id : null;
+    return snapshot.ok ? snapshot.data.assets.find((asset) => asset.kind === 'image') : null;
   });
-  assert.ok(flowAccountId);
-  const storageSummary = await page.evaluate(async () => window.clips.getStorageSummary());
-  assert.ok(storageSummary.ok, 'local storage details should be available');
-  assert.equal(path.resolve(storageSummary.data.directory), path.resolve(userData));
-  assert.ok(storageSummary.data.mediaFiles >= 8, 'storage summary should count saved media');
-  assert.ok(storageSummary.data.mediaBytes > 0 && storageSummary.data.databaseBytes > 0);
+  assert.ok(firstAsset);
+  const characterResult = await page.evaluate(async (portraitAssetId) => window.clips.createCharacter({
+    name: 'Luma',
+    description: 'A recurring fictional subject.',
+    prompt: 'Short dark curls, attentive expression, soft window light.',
+    portraitAssetId,
+    referenceAssetIds: [portraitAssetId],
+  }), firstAsset.id);
+  assert.ok(characterResult.ok, 'a character can use a library portrait');
+  assert.equal(characterResult.data.portraitAssetId, firstAsset.id, 'the selected portrait should be saved on the character');
+  await page.locator('.composer-panel .menu-select').first().getByRole('button').click();
+  const characterOption = page.getByRole('listbox', { name: 'Character' }).getByRole('option', { name: /Luma/ });
+  try {
+    await characterOption.locator('img').waitFor({ timeout: 2500 });
+  } catch {
+    const previewState = await page.evaluate(async () => {
+      const snapshot = await window.clips.getSnapshot();
+      return snapshot.ok ? { characters: snapshot.data.characters.map(({ name, portraitAssetId }) => ({ name, portraitAssetId })), assets: snapshot.data.assets.map(({ id, uri }) => ({ id, uri })), option: document.querySelector('.menu-select-options')?.innerHTML } : snapshot;
+    });
+    throw new Error(`Character dropdown portrait preview missing: ${JSON.stringify(previewState)}`);
+  }
+  assert.equal(await characterOption.locator('img').count(), 1, 'character choices should show their portrait');
+  await characterOption.click();
 
-  await app.evaluate(({ shell }) => {
-    shell.openPath = async (directory) => { globalThis.clipsOpenedDirectory = directory; return ''; };
-    shell.openExternal = async (url) => { globalThis.clipsOpenedFlowUrl = url; return true; };
+  await page.getByRole('button', { name: 'Video', exact: true }).click();
+  await page.getByText('Reference images', { exact: true }).waitFor();
+  await page.locator('.composer-panel .menu-select').first().getByRole('button').click();
+  await page.getByRole('listbox', { name: 'Character' }).getByRole('option', { name: /Luma/ }).click();
+  await page.getByRole('textbox', { name: 'Describe what you want to see' }).fill('A slow turn toward the light, then a quiet smile.');
+  await page.getByRole('button', { name: 'Create video' }).click();
+  await waitForJob(page, 'A slow turn toward the light, then a quiet smile.', (job) => job.status === 'completed');
+  const videoJob = await page.evaluate(async () => {
+    const snapshot = await window.clips.getSnapshot();
+    return snapshot.ok ? snapshot.data.jobs.find((job) => job.kind === 'video') : null;
   });
-  await activate(page.locator('.rail-footer .icon-button[aria-label="Einstellungen"]'));
-  await page.getByTestId('storage-directory').getByText(userData, { exact: true }).waitFor();
-  await activate(page.getByRole('button', { name: 'Datenordner öffnen' }));
-  const openedDirectory = await app.evaluate(() => globalThis.clipsOpenedDirectory);
-  assert.equal(path.resolve(openedDirectory), path.resolve(userData));
+  assert.ok(videoJob);
+  assert.equal(videoJob.inputAssetIds.length, 1, 'the selected character portrait should be sent as a video reference');
 
-  await activate(page.locator('.toolbar-account[aria-label="Konten"]'));
-  await activate(page.locator('.flow-connection-section').getByRole('button', { name: 'Flow öffnen' }));
-  assert.equal(await app.evaluate(() => globalThis.clipsOpenedFlowUrl), 'https://labs.google/fx/tools/flow');
-  const flowPath = path.join(userData, 'flow-export.png');
-  await copyFile(path.join(root, 'public', 'media', 'mock', 'mara-02.png'), flowPath);
+  await page.locator('.rail-nav-item[aria-label="Library"]').click();
+  await page.getByRole('heading', { name: 'Library', level: 1 }).waitFor();
+  assert.equal(await page.locator('.library-kind-tabs button').count(), 3, 'the single library should offer in-place media filters');
+  const importPath = path.join(userData, 'e2e-reference.png');
+  await copyFile(path.join(root, 'fixtures', 'dev-media', 'mara-01.png'), importPath);
   await app.evaluate(({ dialog }, filePath) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] });
-  }, flowPath);
-  await activate(page.locator('.rail-nav-item[aria-label="Mediathek"]'));
-  await activate(page.getByRole('button', { name: 'Flow-Downloads importieren' }));
-  await page.getByRole('button', { name: 'flow-export', exact: false }).waitFor();
-  const flowAsset = await page.evaluate(async () => {
-    const snapshot = await window.clips.getSnapshot();
-    return snapshot.ok ? snapshot.data.assets.find((asset) => asset.fileName === 'flow-export.png') : null;
-  });
-  assert.ok(flowAsset, 'the downloaded Flow file should be copied into Clips');
-  assert.equal(flowAsset.provenance.source, 'flow-handoff');
-  assert.equal(flowAsset.provenance.provider, 'google-flow');
-  assert.equal(flowAsset.provenance.accountId, flowAccountId);
+  }, importPath);
+  await page.getByRole('button', { name: 'Import media' }).click();
+  await page.getByRole('button', { name: /Inspect asset: e2e-reference/ }).waitFor();
+  const importedState = await page.evaluate(async () => { const snapshot = await window.clips.getSnapshot(); return snapshot.ok ? snapshot.data.assets.filter((asset) => asset.title.includes('e2e-reference')).map(({ title, kind, deletedAt }) => ({ title, kind, deletedAt })) : snapshot; });
+  assert.ok(importedState.some((asset) => asset.kind === 'image' && !asset.deletedAt), `the imported reference should be active in the library: ${JSON.stringify(importedState)}`);
+  await page.locator('.rail-nav-item[aria-label="Create"]').click();
+  await page.getByRole('button', { name: 'Choose from library' }).click();
+  const picker = page.locator('.asset-picker-modal');
+  await page.getByRole('heading', { name: 'Choose video reference images' }).waitFor();
+  assert.ok((await picker.boundingBox()).height < 620, 'a short library should keep the reference picker compact');
+  const chooseButton = page.locator('.reference-actions .picker-select-button');
+  assert.equal(await chooseButton.evaluate((element) => getComputedStyle(element).justifyContent), 'center', 'the library picker action label should be centered');
+  await page.screenshot({ path: path.join(screenshotDirectory, 'clips-reference-picker-open.png') });
+  const pickerTile = picker.locator('.picker-item').filter({ hasText: 'e2e-reference' });
+  if (await pickerTile.count() === 0) {
+    const pickerState = await page.evaluate(() => ({ items: document.querySelectorAll('.picker-item').length, body: document.querySelector('.asset-picker-modal')?.innerText, imageOptions: [...document.querySelectorAll('.picker-item')].map((item) => item.innerText) }));
+    throw new Error(`Library picker did not show its imported image: ${JSON.stringify({ importedState, pickerState })}`);
+  }
+  await pickerTile.click();
+  assert.equal(await pickerTile.getAttribute('aria-pressed'), 'true');
+  await picker.getByRole('button', { name: 'Done' }).click();
+  await page.getByText('e2e-reference', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(screenshotDirectory, 'clips-reference-picker.png'), fullPage: true });
+
+  await page.locator('.rail-footer .icon-button[aria-label="Settings"]').click();
+  const settingsLanguage = page.getByRole('button', { name: 'Language' });
+  await settingsLanguage.click();
+  await page.getByRole('listbox', { name: 'Language' }).getByRole('option', { name: 'Deutsch' }).click();
+  await page.waitForFunction(() => document.documentElement.lang === 'de');
+  await assertNoHorizontalOverflow(page);
   await page.setViewportSize({ width: 360, height: 760 });
   await assertNoHorizontalOverflow(page);
-  await page.screenshot({ path: path.join(root, 'test-results', 'library-flow-narrow.png'), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDirectory, 'clips-settings-narrow.png'), fullPage: true });
   await page.setViewportSize({ width: 1520, height: 959 });
 
-  assert.deepEqual(rendererErrors, [], `renderer errors: ${rendererErrors.join('; ')}`);
+  assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
   const expectedWindowBounds = await app.evaluate(({ BrowserWindow, screen }) => {
     const area = screen.getPrimaryDisplay().workArea;
     const bounds = {
       x: area.x + 40,
       y: area.y + 40,
-      width: Math.max(880, Math.min(1180, area.width - 80)),
-      height: Math.max(640, Math.min(760, area.height - 80)),
+      width: Math.max(880, Math.min(1440, area.width - 80)),
+      height: Math.max(640, Math.min(960, area.height - 80)),
     };
     BrowserWindow.getAllWindows()[0].setBounds(bounds);
     return bounds;
@@ -245,21 +217,19 @@ try {
   for (const key of ['x', 'y', 'width', 'height']) assert.equal(savedWindowState[key], expectedWindowBounds[key]);
   assert.equal(savedWindowState.maximized, false);
   app = await launchApp();
-  page = await app.firstWindow();
-  monitorRenderer(page);
-  await page.getByRole('heading', { name: 'Kreativstudio' }).waitFor();
-  const restoredWindowBounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
-  for (const key of ['x', 'y', 'width', 'height']) assert.equal(restoredWindowBounds[key], expectedWindowBounds[key]);
-  assert.equal(await page.locator('html').getAttribute('lang'), 'de');
-  assert.equal(await page.locator('.toolbar-account').textContent(), 'E2E Flow profile');
-  assert.equal(await page.getByRole('dialog').count(), 0, 'onboarding should stay dismissed after restart');
-  const restartSnapshot = await page.evaluate(async () => window.clips.getSnapshot());
-  assert.ok(restartSnapshot.ok);
-  assert.ok(restartSnapshot.data.characters.some((character) => character.name === 'Luma'));
-  assert.ok(restartSnapshot.data.jobs.some((job) => job.status === 'completed' && job.prompt.startsWith('A quiet figure')));
-  assert.ok(restartSnapshot.data.jobs.some((job) => job.status === 'completed' && job.prompt === 'A slow turn toward the light, then a quiet smile.' && job.retryOfJobId));
-  assert.ok(restartSnapshot.data.jobs.some((job) => job.status === 'cancelled' && job.prompt === 'Cancel this local sample safely.'));
-  console.log('Electron end-to-end flow passed: native menu actions, window restoration, creation, retry, cancellation, video playback, characters, import, storage, Flow handoff, search, assignment, localization, accounts, and restart persistence.');
+  const restoredPage = await app.firstWindow();
+  monitorRenderer(restoredPage);
+  await restoredPage.getByRole('heading', { name: 'Kreativstudio' }).waitFor();
+  const restoredBounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
+  for (const key of ['x', 'y', 'width', 'height']) assert.equal(restoredBounds[key], expectedWindowBounds[key]);
+  assert.equal(await restoredPage.locator('html').getAttribute('lang'), 'de');
+  const finalSnapshot = await restoredPage.evaluate(async () => window.clips.getSnapshot());
+  assert.ok(finalSnapshot.ok);
+  assert.ok(finalSnapshot.data.characters.some((character) => character.name === 'Luma'));
+  assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.prompt.startsWith('A quiet figure')));
+  assert.ok(finalSnapshot.data.jobs.some((job) => job.status === 'completed' && job.kind === 'video' && job.inputAssetIds.length === 1));
+  assert.deepEqual(rendererErrors, [], `renderer errors: ${rendererErrors.join('; ')}`);
+  console.log('Desktop e2e smoke test passed: empty first-run workspace, animated setup, local generations, portrait-backed characters, reference picker, localization, and window restore.');
 } finally {
   if (app) await app.close().catch(() => undefined);
   await rm(userData, { recursive: true, force: true });

@@ -1,10 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import '@fontsource/mukta-mahee/latin-400.css';
-import '@fontsource/mukta-mahee/latin-ext-400.css';
-import '@fontsource/mukta-mahee/latin-500.css';
-import '@fontsource/mukta-mahee/latin-ext-500.css';
-import '@fontsource/mukta-mahee/latin-600.css';
-import '@fontsource/mukta-mahee/latin-ext-600.css';
+import '@fontsource-variable/manrope/wght.css';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -14,6 +9,7 @@ export const metadata: Metadata = {
   authors: [{ name: 'Nikita Berger' }],
   creator: 'Nikita Berger',
   openGraph: { title: 'Clips', description: 'A local-first visual creation studio.', type: 'website' },
+  icons: { icon: [{ url: 'clips.png', type: 'image/png' }] },
 };
 
 export const viewport: Viewport = {

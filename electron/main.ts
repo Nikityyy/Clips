@@ -4,6 +4,7 @@ import { promises as fs, createReadStream, existsSync, openSync, readSync, close
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { GFlowCli, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { DatabaseStore } from './database';
@@ -17,7 +18,6 @@ import type {
   CreateCharacterInput,
   EntityId,
   ErrorCode,
-  FlowImportInput,
   GenerationDraft,
   GenerationJob,
   GenerationRequest,
@@ -30,6 +30,7 @@ import type {
   NativeMenuAction,
   ProviderAccount,
   ProviderCapabilities,
+  ProviderModel,
   Result,
   Settings,
   SettingsPatch,
@@ -42,7 +43,7 @@ type SavedWindowState = { x: number; y: number; width: number; height: number; m
 type MenuCopy = {
   app: string; about: string; services: string; hide: string; hideOthers: string; showAll: string; quit: string;
   file: string; importMedia: string; settings: string; closeWindow: string; edit: string; view: string;
-  create: string; characters: string; images: string; videos: string; library: string; queue: string;
+  create: string; characters: string; library: string; queue: string;
   fullScreen: string; reload: string; developerTools: string; window: string; minimize: string; zoom: string;
   front: string; help: string; helpLink: string; addToDictionary: string;
 };
@@ -50,14 +51,14 @@ const MENU_COPY: Record<Locale, MenuCopy> = {
   en: {
     app: 'Clips', about: 'About Clips', services: 'Services', hide: 'Hide Clips', hideOthers: 'Hide Others', showAll: 'Show All', quit: 'Quit Clips',
     file: 'File', importMedia: 'Import media…', settings: 'Settings…', closeWindow: 'Close window', edit: 'Edit', view: 'View',
-    create: 'Create', characters: 'Characters', images: 'Images', videos: 'Videos', library: 'Library', queue: 'Queue',
+    create: 'Create', characters: 'Characters', library: 'Library', queue: 'Queue',
     fullScreen: 'Toggle full screen', reload: 'Reload', developerTools: 'Developer tools', window: 'Window', minimize: 'Minimize', zoom: 'Zoom',
     front: 'Bring all to front', help: 'Help', helpLink: 'Clips help and updates', addToDictionary: 'Add to dictionary',
   },
   de: {
     app: 'Clips', about: 'Über Clips', services: 'Dienste', hide: 'Clips ausblenden', hideOthers: 'Andere ausblenden', showAll: 'Alle einblenden', quit: 'Clips beenden',
     file: 'Datei', importMedia: 'Medien importieren…', settings: 'Einstellungen…', closeWindow: 'Fenster schließen', edit: 'Bearbeiten', view: 'Ansicht',
-    create: 'Erstellen', characters: 'Figuren', images: 'Bilder', videos: 'Videos', library: 'Bibliothek', queue: 'Warteschlange',
+    create: 'Erstellen', characters: 'Figuren', library: 'Mediathek', queue: 'Warteschlange',
     fullScreen: 'Vollbild umschalten', reload: 'Neu laden', developerTools: 'Entwicklertools', window: 'Fenster', minimize: 'Minimieren', zoom: 'Zoomen',
     front: 'Alle Fenster nach vorn', help: 'Hilfe', helpLink: 'Clips Hilfe und Updates', addToDictionary: 'Zum Wörterbuch hinzufügen',
   },
@@ -79,8 +80,6 @@ class ClipsError extends Error {
   }
 }
 
-const FLOW_URL = 'https://labs.google/fx/tools/flow';
-const DEFAULT_ACCOUNT_ID = 'mock-default';
 const MAX_FILES_PER_IMPORT = 20;
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 750 * 1024 * 1024;
@@ -88,53 +87,66 @@ const MAX_IMPORT_BATCH_BYTES = 1024 * 1024 * 1024;
 const MOCK_JOB_DURATION_MS = 2400;
 const MOCK_IMAGE_MODEL_ID = 'mock-image';
 const MOCK_VIDEO_MODEL_ID = 'mock-video';
+const MOCK_PROVIDER_ENABLED = process.env.CLIPS_TEST_PROVIDER === 'mock'
+  || (!app.isPackaged && process.env.CLIPS_PROVIDER !== 'google-flow');
+const DEFAULT_ACCOUNT_ID = MOCK_PROVIDER_ENABLED ? 'mock-default' : 'flow-default';
+const FLOW_ACCOUNT_ID = 'flow-default';
+const FLOW_PROFILE_NAME = 'clips';
 const TRUSTED_NO_INPUT = z.undefined();
+const flowCli = new GFlowCli();
 
-const capabilities: ProviderCapabilities = {
-  provider: 'mock',
-  label: 'Local mock provider',
-  detail: 'Deterministic sample outputs. No Google account or Flow credits are used.',
-  models: [
-    {
-      id: MOCK_IMAGE_MODEL_ID,
-      label: 'Portrait study',
-      kind: 'image',
-      description: 'Creates a local sample contact sheet from the bundled portrait fixtures.',
-      supportsReferences: true,
-      supportsCharacter: true,
-      creditCost: 0,
-    },
-    {
-      id: MOCK_VIDEO_MODEL_ID,
-      label: 'Motion study',
-      kind: 'video',
-      description: 'Creates a local sample clip from the bundled video fixture.',
-      supportsReferences: true,
-      supportsCharacter: true,
-      creditCost: 0,
-    },
-  ],
-  supportsImageToVideo: true,
-  creditCost: 0,
+function makeMockCapabilities(): ProviderCapabilities {
+  return {
+    provider: 'mock',
+    status: 'mock-ready',
+    label: 'Local test provider',
+    detail: 'Local test generations. No Google account or Flow credits are used.',
+    models: [
+      { id: MOCK_IMAGE_MODEL_ID, label: 'Portrait study', kind: 'image', description: 'Local test image output.', supportsReferences: true, supportsCharacter: true, referenceCap: 12, creditCost: 0 },
+      { id: MOCK_VIDEO_MODEL_ID, label: 'Motion study', kind: 'video', description: 'Local test video output.', supportsReferences: true, supportsCharacter: true, referenceCap: 12, creditCost: 0 },
+    ],
+    imageAspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'],
+    videoAspectRatios: ['9:16', '16:9'],
+    profileName: null,
+    supportsImageToVideo: true,
+    creditCost: 0,
+  };
+}
+
+let capabilities: ProviderCapabilities = MOCK_PROVIDER_ENABLED ? makeMockCapabilities() : {
+  provider: 'google-flow',
+  status: 'checking',
+  label: 'Google Flow',
+  detail: 'Checking the gflow-cli connection and model catalog.',
+  models: [],
+  imageAspectRatios: [],
+  videoAspectRatios: [],
+  profileName: FLOW_PROFILE_NAME,
+  supportsImageToVideo: false,
+  creditCost: null,
 };
 
-const defaultDraft = (mode: JobKind): GenerationDraft => ({
-  prompt: '',
-  characterId: null,
-  referenceAssetIds: [],
-  modelId: mode === 'image' ? MOCK_IMAGE_MODEL_ID : MOCK_VIDEO_MODEL_ID,
-  aspectRatio: mode === 'image' ? '2:3' : '16:9',
-  outputCount: mode === 'image' ? 4 : 1,
-  sourceImageId: null,
-});
+const defaultDraft = (mode: JobKind): GenerationDraft => {
+  const model = capabilities.models.find((item) => item.kind === mode);
+  const aspects = mode === 'image' ? capabilities.imageAspectRatios : capabilities.videoAspectRatios;
+  return {
+    prompt: '',
+    characterId: null,
+    referenceAssetIds: [],
+    modelId: model?.id ?? '',
+    aspectRatio: aspects[0] ?? '',
+    outputCount: mode === 'image' ? 4 : 1,
+    sourceImageId: null,
+  };
+};
 
 const makeDefaultSettings = (): Settings => ({
   locale: 'en',
   activeAccountId: DEFAULT_ACCOUNT_ID,
-  imageModelId: MOCK_IMAGE_MODEL_ID,
-  videoModelId: MOCK_VIDEO_MODEL_ID,
-  imageAspectRatio: '2:3',
-  videoAspectRatio: '16:9',
+  imageModelId: capabilities.models.find((item) => item.kind === 'image')?.id ?? '',
+  videoModelId: capabilities.models.find((item) => item.kind === 'video')?.id ?? '',
+  imageAspectRatio: capabilities.imageAspectRatios[0] ?? '',
+  videoAspectRatio: capabilities.videoAspectRatios[0] ?? '',
   outputCount: 4,
   drafts: { image: defaultDraft('image'), video: defaultDraft('video') },
 });
@@ -260,19 +272,129 @@ function activeSettings(): Settings {
   const raw = mustStore().setting<unknown>('app', makeDefaultSettings());
   const saved = raw && typeof raw === 'object' ? raw as Partial<Settings> : {};
   const base = makeDefaultSettings();
-  const accounts = mustStore().all('SELECT id FROM accounts');
-  const validAccountIds = new Set(accounts.map((row) => text(row, 'id')));
-  const savedActiveAccountId = typeof saved.activeAccountId === 'string' ? saved.activeAccountId : DEFAULT_ACCOUNT_ID;
-  if (!validAccountIds.has(savedActiveAccountId)) saved.activeAccountId = DEFAULT_ACCOUNT_ID;
+  const accounts = mustStore().all('SELECT id, provider FROM accounts');
+  const validAccounts = new Map(accounts.map((row) => [text(row, 'id'), text(row, 'provider')]));
+  let activeAccountId = typeof saved.activeAccountId === 'string' ? saved.activeAccountId : DEFAULT_ACCOUNT_ID;
+  if (!validAccounts.has(activeAccountId) || (!MOCK_PROVIDER_ENABLED && validAccounts.get(activeAccountId) !== 'google-flow')) activeAccountId = DEFAULT_ACCOUNT_ID;
+  const imageModelId = validSavedModel(saved.imageModelId, 'image', base.imageModelId);
+  const videoModelId = validSavedModel(saved.videoModelId, 'video', base.videoModelId);
+  const imageAspectRatio = validSavedAspect(saved.imageAspectRatio, 'image', base.imageAspectRatio);
+  const videoAspectRatio = validSavedAspect(saved.videoAspectRatio, 'video', base.videoAspectRatio);
   return {
     ...base,
     ...saved,
-    activeAccountId: saved.activeAccountId ?? savedActiveAccountId,
+    activeAccountId,
+    imageModelId,
+    videoModelId,
+    imageAspectRatio,
+    videoAspectRatio,
     drafts: {
-      image: { ...base.drafts.image, ...saved.drafts?.image },
-      video: { ...base.drafts.video, ...saved.drafts?.video },
+      image: { ...base.drafts.image, ...saved.drafts?.image, modelId: validSavedModel(saved.drafts?.image?.modelId, 'image', imageModelId), aspectRatio: validSavedAspect(saved.drafts?.image?.aspectRatio, 'image', imageAspectRatio) },
+      video: { ...base.drafts.video, ...saved.drafts?.video, modelId: validSavedModel(saved.drafts?.video?.modelId, 'video', videoModelId), aspectRatio: validSavedAspect(saved.drafts?.video?.aspectRatio, 'video', videoAspectRatio) },
     },
   };
+}
+
+function aspectChoices(kind: JobKind): string[] {
+  return kind === 'image' ? capabilities.imageAspectRatios : capabilities.videoAspectRatios;
+}
+
+function validSavedModel(modelId: unknown, kind: JobKind, fallback: string): string {
+  const available = capabilities.models.filter((model) => model.kind === kind);
+  if (!available.length) return typeof modelId === 'string' ? modelId : fallback;
+  return typeof modelId === 'string' && available.some((model) => model.id === modelId) ? modelId : fallback;
+}
+
+function validSavedAspect(value: unknown, kind: JobKind, fallback: string): string {
+  const available = aspectChoices(kind);
+  if (!available.length) return typeof value === 'string' ? value : fallback;
+  return typeof value === 'string' && available.includes(value) ? value : fallback;
+}
+
+function buildFlowCapabilities(catalog: FlowCatalog, status: ProviderCapabilities['status'], detail: string): ProviderCapabilities {
+  const models = catalog.models.map((model) => ({
+    id: model.id,
+    label: model.label,
+    kind: model.kind,
+    description: model.label,
+    supportsReferences: model.referenceCap > 0,
+    supportsCharacter: false,
+    aliases: model.aliases,
+    referenceCap: model.referenceCap,
+    maxDuration: model.maxDuration,
+    creditCost: null,
+  }));
+  return {
+    provider: 'google-flow',
+    status,
+    label: 'Google Flow',
+    detail,
+    models,
+    imageAspectRatios: catalog.imageAspectRatios,
+    videoAspectRatios: catalog.videoAspectRatios,
+    profileName: FLOW_PROFILE_NAME,
+    supportsImageToVideo: models.some((model) => model.kind === 'video' && model.referenceCap > 0),
+    creditCost: null,
+  };
+}
+
+function saveFlowAccount(label: string, connection: ProviderAccount['connection']): void {
+  const db = mustStore();
+  const row = db.one('SELECT id FROM accounts WHERE id = ?', [FLOW_ACCOUNT_ID]);
+  if (row) db.run('UPDATE accounts SET label = ?, connection = ? WHERE id = ?', [label, connection, FLOW_ACCOUNT_ID]);
+  else db.run('INSERT INTO accounts (id, provider, label, connection, created_at) VALUES (?, ?, ?, ?, ?)', [FLOW_ACCOUNT_ID, 'google-flow', label, connection, nowIso()]);
+  const settings = activeSettings();
+  settings.activeAccountId = MOCK_PROVIDER_ENABLED ? settings.activeAccountId : FLOW_ACCOUNT_ID;
+  db.setSetting('app', settings);
+}
+
+function applyProviderDefaults(): void {
+  if (!store || capabilities.provider !== 'google-flow') return;
+  // activeSettings validates saved preferences against the provider catalog and
+  // only falls back when a saved option has disappeared. Keep valid model and
+  // aspect choices across app restarts and gflow-cli updates.
+  mustStore().setSetting('app', activeSettings());
+}
+
+async function setFlowConnectionStatus(status: 'unavailable' | 'needs-login' | 'checking' | 'ready', detail: string, email = ''): Promise<void> {
+  capabilities = { ...capabilities, status, detail };
+  if (store) {
+    saveFlowAccount(email || 'Google Flow', status === 'ready' ? 'connected' : 'needs-login');
+    await mustStore().flush();
+    publishSnapshot();
+  }
+}
+
+async function verifyFlowSession(): Promise<void> {
+  try {
+    const email = await flowCli.verifySession();
+    await setFlowConnectionStatus('ready', 'Google Flow is connected through gflow-cli.', email);
+  } catch (error) {
+    await setFlowConnectionStatus('needs-login', error instanceof Error ? error.message : 'Sign in to Google Flow to generate media.');
+  }
+}
+
+async function loadFlowProvider(): Promise<void> {
+  if (MOCK_PROVIDER_ENABLED) return;
+  try {
+    const catalog = await flowCli.catalog();
+    const profiles = await flowCli.profiles();
+    const profile = profiles.find((item) => item.name === flowCli.profileName);
+    const hasSession = Boolean(profile?.cookies_present);
+    capabilities = buildFlowCapabilities(catalog, hasSession ? 'checking' : 'needs-login', hasSession ? 'Verifying the saved Google session.' : 'Sign in to Google Flow to generate media.');
+    saveFlowAccount(profile?.google_account || 'Google Flow', hasSession ? 'needs-login' : 'needs-login');
+    applyProviderDefaults();
+    await mustStore().flush();
+    publishSnapshot();
+    if (hasSession) void verifyFlowSession();
+  } catch (error) {
+    capabilities = { ...capabilities, status: 'unavailable', detail: error instanceof Error ? error.message : 'gflow-cli is not available.' };
+    if (store) {
+      saveFlowAccount('Google Flow', 'needs-login');
+      await mustStore().flush();
+      publishSnapshot();
+    }
+  }
 }
 
 function accountFromRow(row: Row): ProviderAccount {
@@ -280,7 +402,7 @@ function accountFromRow(row: Row): ProviderAccount {
     id: text(row, 'id'),
     provider: text(row, 'provider') === 'google-flow' ? 'google-flow' : 'mock',
     label: text(row, 'label'),
-    connection: text(row, 'connection') === 'browser-handoff' ? 'browser-handoff' : 'mock-ready',
+    connection: ['needs-login', 'connected', 'browser-handoff'].includes(text(row, 'connection')) ? text(row, 'connection') as ProviderAccount['connection'] : 'mock-ready',
     createdAt: text(row, 'created_at'),
   };
 }
@@ -301,7 +423,7 @@ function jobFromRow(row: Row): GenerationJob {
     aspectRatio: text(row, 'aspect_ratio'),
     outputCount: numberValue(row, 'output_count', 1),
     accountId: nullableText(row, 'account_id'),
-    provider: 'mock',
+    provider: text(row, 'provider') === 'google-flow' ? 'google-flow' : 'mock',
     error: nullableText(row, 'error'),
     retryOfJobId: nullableText(row, 'retry_of_job_id'),
     createdAt: text(row, 'created_at'),
@@ -366,13 +488,22 @@ function characterFromRow(row: Row): Character {
 function getSnapshot(): AppSnapshot {
   const db = mustStore();
   const settings = activeSettings();
+  const allAssets = db.all('SELECT * FROM assets WHERE deleted_at IS NULL ORDER BY created_at DESC, rowid DESC').map(assetFromRow);
+  const assets = MOCK_PROVIDER_ENABLED ? allAssets : allAssets.filter((asset) => asset.provenance.provider !== 'mock');
+  const visibleAssetIds = new Set(assets.map((asset) => asset.id));
+  const characters = db.all('SELECT * FROM characters ORDER BY updated_at DESC').map(characterFromRow)
+    .filter((character) => MOCK_PROVIDER_ENABLED || !character.referenceAssetIds.length || character.referenceAssetIds.some((id) => visibleAssetIds.has(id)));
+  const jobs = db.all('SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC').map(jobFromRow)
+    .filter((job) => MOCK_PROVIDER_ENABLED || job.provider !== 'mock');
+  const accounts = db.all('SELECT * FROM accounts ORDER BY created_at ASC, rowid ASC').map(accountFromRow)
+    .filter((account) => MOCK_PROVIDER_ENABLED || account.provider !== 'mock');
   return {
     revision: snapshotRevision,
     updatedAt: nowIso(),
-    assets: db.all('SELECT * FROM assets WHERE deleted_at IS NULL ORDER BY created_at DESC, rowid DESC').map(assetFromRow),
-    characters: db.all('SELECT * FROM characters ORDER BY updated_at DESC').map(characterFromRow),
-    jobs: db.all('SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC').map(jobFromRow),
-    accounts: db.all('SELECT * FROM accounts ORDER BY created_at ASC, rowid ASC').map(accountFromRow),
+    assets,
+    characters,
+    jobs,
+    accounts,
     settings,
     capabilities,
     undoDeleteAvailable: Boolean(db.setting<string | null>('lastDeleteBatchId', null)),
@@ -498,8 +629,7 @@ async function readDimensions(filePath: string, mimeType: string): Promise<{ wid
 
 function mockDirectory(): string {
   if (process.env.CLIPS_TEST_USER_DATA && process.env.CLIPS_TEST_MEDIA_DIRECTORY) return path.resolve(process.env.CLIPS_TEST_MEDIA_DIRECTORY);
-  if (app.isPackaged) return path.join(process.resourcesPath, 'media', 'mock');
-  return path.resolve(__dirname, '..', '..', 'public', 'media', 'mock');
+  return path.resolve(__dirname, '..', '..', 'fixtures', 'dev-media');
 }
 
 function canonicalStorageName(id: EntityId, extension: string): string {
@@ -591,82 +721,61 @@ async function importPaths(paths: string[], context: ImportContext): Promise<Imp
   return { imported, rejected };
 }
 
-function setAccountInSettings(accountId: EntityId): Settings {
-  const db = mustStore();
-  const settings = activeSettings();
-  settings.activeAccountId = accountId;
-  db.setSetting('app', settings);
-  return settings;
-}
-
 async function seedLocalLibrary(): Promise<void> {
   const db = mustStore();
   if (db.one('SELECT id FROM accounts WHERE id = ?', [DEFAULT_ACCOUNT_ID]) === null) {
+    const provider = MOCK_PROVIDER_ENABLED ? 'mock' : 'google-flow';
     db.run('INSERT INTO accounts (id, provider, label, connection, created_at) VALUES (?, ?, ?, ?, ?)', [
-      DEFAULT_ACCOUNT_ID, 'mock', 'Local mock workspace', 'mock-ready', nowIso(),
+      DEFAULT_ACCOUNT_ID, provider, MOCK_PROVIDER_ENABLED ? 'Local test workspace' : 'Google Flow', MOCK_PROVIDER_ENABLED ? 'mock-ready' : 'needs-login', nowIso(),
     ]);
   }
   if (db.setting<Settings | null>('app', null) === null) db.setSetting('app', makeDefaultSettings());
   const settings = activeSettings();
   db.setSetting('app', settings);
-  if (db.setting<boolean>('mockSeeded', false)) {
-    await db.flush();
-    return;
-  }
-
-  const fixturesPath = mockDirectory();
-  const promptPath = path.join(fixturesPath, 'generation-prompt.txt');
-  const fixtureNames = ['mara-01.png', 'mara-02.png', 'mara-03.png', 'mara-04.png', 'mara-05.png', 'mara-06.png'];
-  let prompt = 'Fictional portrait study sample included with Clips.';
-  try { prompt = await fs.readFile(promptPath, 'utf8'); } catch { /* Fixture files can be added after a clean build. */ }
-  const ids: string[] = [];
-  for (const [index, fileName] of fixtureNames.entries()) {
-    const fixturePath = path.join(fixturesPath, fileName);
-    if (!existsSync(fixturePath)) continue;
-    try {
-      const asset = await copyIntoLibrary(fixturePath, {
-        source: 'mock', provider: 'mock', accountId: null, prompt, modelId: MOCK_IMAGE_MODEL_ID,
-        sourceAssetIds: [], characterId: null,
-      }, `Mara · ${String(index + 1).padStart(2, '0')}`);
-      ids.push(asset.id);
-    } catch (error) {
-      console.warn(`[Clips] Could not install bundled sample ${fileName}:`, error instanceof Error ? error.message : 'unknown error');
-      // A missing optional sample must not keep the rest of the library from opening.
+  db.setSetting('mockSeeded', true);
+  const seedDevelopmentExamples = !app.isPackaged && MOCK_PROVIDER_ENABLED
+    && (!process.env.CLIPS_TEST_USER_DATA || process.env.CLIPS_DEV_SEED_EXAMPLES === '1')
+    && db.one('SELECT id FROM assets LIMIT 1') === null
+    && db.one('SELECT id FROM characters LIMIT 1') === null;
+  if (seedDevelopmentExamples && !db.setting('developmentExamplesSeeded', false)) {
+    const fixtures = mockDirectory();
+    const imageNames = ['mara-01.png', 'mara-02.png', 'mara-03.png', 'mara-04.png', 'mara-05.png', 'mara-06.png'];
+    const imageTitles = ['Mara · portrait', 'Mara · profile', 'Mara · soft light', 'Mara · studio', 'Mara · close-up', 'Mara · reference'];
+    const images: Asset[] = [];
+    for (const [index, fileName] of imageNames.entries()) {
+      images.push(await copyIntoLibrary(path.join(fixtures, fileName), {
+        source: 'mock', provider: 'mock', accountId: DEFAULT_ACCOUNT_ID,
+        prompt: 'A fictional character named Mara, provided as a local development sample.',
+        modelId: MOCK_IMAGE_MODEL_ID, sourceAssetIds: [], characterId: null,
+      }, imageTitles[index]));
     }
-  }
-  if (ids.length > 0) {
+    const video = await copyIntoLibrary(path.join(fixtures, 'mock-video.mp4'), {
+      source: 'mock', provider: 'mock', accountId: DEFAULT_ACCOUNT_ID,
+      prompt: 'A short motion sample for local development.',
+      modelId: MOCK_VIDEO_MODEL_ID, sourceAssetIds: [], characterId: null,
+    }, 'Motion · sample clip');
     const characterId = randomUUID();
-    const now = nowIso();
+    const createdAt = nowIso();
     db.transaction(() => {
       db.run('INSERT INTO characters (id, name, description, prompt, portrait_asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [
-        characterId,
-        'Mara',
-        'A fictional character from the included local sample set.',
-        prompt,
-        ids[0],
-        now,
-        now,
+        characterId, 'Mara', 'A fictional character for exploring the development workspace.',
+        'Short dark curls, thoughtful expression, natural window light.', images[0].id, createdAt, createdAt,
       ]);
-      associateCharacter(characterId, ids);
-      for (const assetId of ids) {
-        db.run('INSERT OR IGNORE INTO asset_characters (asset_id, character_id) VALUES (?, ?)', [assetId, characterId]);
+      for (const image of images) {
+        db.run('INSERT OR IGNORE INTO character_references (character_id, asset_id) VALUES (?, ?)', [characterId, image.id]);
+        db.run('INSERT OR IGNORE INTO asset_characters (asset_id, character_id) VALUES (?, ?)', [image.id, characterId]);
       }
+      db.run('INSERT OR IGNORE INTO asset_characters (asset_id, character_id) VALUES (?, ?)', [video.id, characterId]);
+      db.setSetting('developmentExamplesSeeded', true);
     });
   }
-  db.setSetting('mockSeeded', ids.length > 0);
   await db.flush();
 }
 
-function modelFor(id: string, kind: JobKind): void {
-  const model = capabilities.models.find((candidate) => candidate.id === id);
-  if (!model || model.kind !== kind) throw new ClipsError('INVALID_INPUT', 'Choose a model that supports this type of creation.');
-}
-
-function activeAccountIdForMock(): EntityId | null {
-  const settings = activeSettings();
-  const account = mustStore().one('SELECT * FROM accounts WHERE id = ?', [settings.activeAccountId]);
-  if (!account || text(account, 'provider') !== 'mock') return null;
-  return settings.activeAccountId;
+function modelFor(id: string, kind: JobKind): ProviderModel {
+  const model = capabilities.models.find((candidate) => candidate.id === id && candidate.kind === kind);
+  if (!model) throw new ClipsError('INVALID_INPUT', 'Choose a model that supports this type of creation.');
+  return model;
 }
 
 function insertJob(args: {
@@ -682,14 +791,17 @@ function insertJob(args: {
   const db = mustStore();
   const id = randomUUID();
   const createdAt = nowIso();
-  const accountId = activeAccountIdForMock();
+  const settings = activeSettings();
+  const account = db.one('SELECT id, provider FROM accounts WHERE id = ?', [settings.activeAccountId]);
+  const provider = capabilities.provider;
+  const accountId = account && text(account, 'provider') === provider ? settings.activeAccountId : null;
   db.run(`INSERT INTO jobs (
     id, kind, status, progress, stage, prompt, character_id, input_asset_ids, output_asset_ids,
     model_id, aspect_ratio, output_count, account_id, provider, error, retry_of_job_id,
     created_at, started_at, completed_at, progress_started_at
-  ) VALUES (?, ?, 'queued', 0, 'Waiting to start', ?, ?, ?, '[]', ?, ?, ?, ?, 'mock', NULL, ?, ?, NULL, NULL, NULL)`, [
+  ) VALUES (?, ?, 'queued', 0, 'Waiting to start', ?, ?, ?, '[]', ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL)`, [
     id, args.kind, args.prompt, args.characterId, JSON.stringify(args.inputAssetIds), args.modelId,
-    args.aspectRatio, args.outputCount, accountId, args.retryOfJobId ?? null, createdAt,
+    args.aspectRatio, args.outputCount, accountId, provider, args.retryOfJobId ?? null, createdAt,
   ]);
   return jobFromRow(db.one('SELECT * FROM jobs WHERE id = ?', [id])!);
 }
@@ -819,6 +931,94 @@ async function completeMockJob(job: GenerationJob): Promise<void> {
   }
 }
 
+function startFlowJob(jobId: EntityId): void {
+  if (scheduledJobs.has(jobId)) return;
+  scheduledJobs.add(jobId);
+  void runFlowJob(jobId).finally(() => scheduledJobs.delete(jobId));
+}
+
+async function runFlowJob(jobId: EntityId): Promise<void> {
+  const db = mustStore();
+  const outputDirectory = path.join(app.getPath('userData'), 'flow-staging', jobId);
+  try {
+    const row = db.one('SELECT * FROM jobs WHERE id = ?', [jobId]);
+    if (!row || text(row, 'status') !== 'queued') return;
+    const job = jobFromRow(row);
+    const startedAt = nowIso();
+    db.run("UPDATE jobs SET status = 'running', progress = 0, stage = 'Starting gflow-cli', started_at = ? WHERE id = ?", [startedAt, jobId]);
+    await db.flush();
+    publishSnapshot();
+    await fs.mkdir(outputDirectory, { recursive: true });
+
+    const sourcePaths = job.inputAssetIds.map((id) => {
+      const asset = db.one('SELECT storage_name FROM assets WHERE id = ? AND deleted_at IS NULL', [id]);
+      if (!asset) throw new ClipsError('NOT_FOUND', 'One of the selected reference images is no longer in the library.');
+      return safeMediaPath(text(asset, 'storage_name'));
+    });
+    const verb = job.kind === 'image'
+      ? sourcePaths.length ? 'i2i' : 't2i'
+      : sourcePaths.length ? 'r2v' : 't2v';
+    const args = job.kind === 'image' ? ['image', verb] : ['video', verb];
+    args.push(job.prompt);
+    for (const sourcePath of sourcePaths) args.push('--ref', sourcePath);
+    args.push('--model', job.modelId, '--aspect', job.aspectRatio);
+    if (job.kind === 'image') args.push('--count', String(job.outputCount), '--out', outputDirectory);
+    else args.push('--count', '1', '--out-dir', outputDirectory);
+    args.push('--profile', flowCli.profileName, '--json');
+
+    db.run("UPDATE jobs SET progress = 0, stage = 'Generating with Google Flow' WHERE id = ?", [jobId]);
+    await db.flush();
+    publishSnapshot();
+    const stdout = await flowCli.generate(args);
+    const generatedPaths = parseGenerationPaths(stdout, job.kind);
+    if (!generatedPaths.length) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Flow finished without returning any local media files.');
+    const resolvedPaths = await Promise.all(generatedPaths.map(async (filePath) => {
+      const resolved = path.resolve(filePath);
+      const relative = path.relative(outputDirectory, resolved);
+      if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+        throw new ClipsError('PERMISSION_DENIED', 'gflow-cli returned a file outside its temporary output folder.');
+      }
+      const stat = await fs.stat(resolved);
+      if (!stat.isFile()) throw new ClipsError('UNSUPPORTED_MEDIA', 'gflow-cli returned a path that is not a media file.');
+      return resolved;
+    }));
+    const summary = await importPaths(resolvedPaths, {
+      source: 'flow-generation',
+      provider: 'google-flow',
+      accountId: job.accountId,
+      prompt: job.prompt,
+      modelId: job.modelId,
+      sourceAssetIds: job.inputAssetIds,
+      characterId: job.characterId,
+    });
+    if (!summary.imported.length) throw new ClipsError('UNSUPPORTED_MEDIA', 'Flow returned files, but Clips could not import them.');
+    const finishedAt = nowIso();
+    db.run("UPDATE jobs SET status = 'completed', progress = 100, stage = 'Complete', output_asset_ids = ?, error = NULL, completed_at = ? WHERE id = ? AND status = 'running'", [
+      JSON.stringify(summary.imported.map((asset) => asset.id)), finishedAt, jobId,
+    ]);
+    await db.flush();
+    publishSnapshot();
+  } catch (error) {
+    const current = db.one('SELECT status FROM jobs WHERE id = ?', [jobId]);
+    if (current && text(current, 'status') === 'running') {
+      const message = error instanceof ClipsError ? error.message : error instanceof Error ? error.message : 'Google Flow could not finish this generation.';
+      db.run("UPDATE jobs SET status = 'failed', error = ?, stage = 'Generation stopped', completed_at = ? WHERE id = ?", [message.slice(0, 600), nowIso(), jobId]);
+      await db.flush().catch(() => undefined);
+      publishSnapshot();
+    }
+  } finally {
+    await fs.rm(outputDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function assertFlowReady(): void {
+  if (capabilities.provider === 'google-flow' && capabilities.status !== 'ready') {
+    throw new ClipsError('PROVIDER_UNAVAILABLE', capabilities.status === 'unavailable'
+      ? capabilities.detail
+      : 'Connect a verified Google Flow account before generating.');
+  }
+}
+
 function readFileHeaderSync(filePath: string): Uint8Array {
   const buffer = Buffer.alloc(64);
   const fd = openSync(filePath, 'r');
@@ -853,51 +1053,59 @@ function dimensionsForFixture(mimeType: string, width: number | null, height: nu
 }
 
 function resumeJobs(): void {
-  const rows = mustStore().all("SELECT id FROM jobs WHERE status IN ('queued', 'running') ORDER BY created_at ASC");
-  for (const row of rows) startMockJob(text(row, 'id'));
+  const rows = mustStore().all("SELECT id, provider FROM jobs WHERE status IN ('queued', 'running') ORDER BY created_at ASC");
+  for (const row of rows) {
+    const id = text(row, 'id');
+    if (text(row, 'provider') === 'google-flow') {
+      mustStore().run("UPDATE jobs SET status = 'failed', error = ?, stage = 'Interrupted', completed_at = ? WHERE id = ?", ['Clips closed while Flow was generating. Check Flow before retrying this job.', nowIso(), id]);
+    } else startMockJob(id);
+  }
+  void mustStore().flush().then(publishSnapshot);
 }
 
-function validateAspectRatio(value: string): string {
-  const allowed = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9']);
-  if (!allowed.has(value)) throw new ClipsError('INVALID_INPUT', 'Choose a supported aspect ratio.');
+function validateAspectRatio(value: string, kind: JobKind): string {
+  if (!aspectChoices(kind).includes(value)) throw new ClipsError('INVALID_INPUT', 'Choose an aspect ratio supported by the selected Flow model.');
   return value;
+}
+
+function characterReferenceIds(characterId: EntityId | null): EntityId[] {
+  if (!characterId) return [];
+  const character = mustStore().one('SELECT * FROM characters WHERE id = ?', [characterId]);
+  if (!character) throw new ClipsError('NOT_FOUND', 'That character is no longer in your library.');
+  const saved = characterFromRow(character);
+  return [...new Set([...saved.referenceAssetIds, ...(saved.portraitAssetId ? [saved.portraitAssetId] : [])])];
 }
 
 function prepareGenerationRequest(request: GenerationRequest, kind: 'image'): GenerationJob {
   const settings = activeSettings();
   const prompt = request.prompt.trim();
   const modelId = request.modelId ?? settings.imageModelId;
-  const aspectRatio = validateAspectRatio(request.aspectRatio ?? settings.imageAspectRatio);
+  const model = modelFor(modelId, kind);
+  const aspectRatio = validateAspectRatio(request.aspectRatio ?? settings.imageAspectRatio, 'image');
   const outputCount = request.outputCount ?? settings.outputCount;
-  modelFor(modelId, kind);
+  if (capabilities.provider === 'google-flow' && outputCount > 4) throw new ClipsError('INVALID_INPUT', 'gflow-cli supports up to four images in one generation.');
   const references = request.referenceAssetIds ?? settings.drafts.image.referenceAssetIds;
-  validateExistingAssets(references, 'image');
   const characterId = request.characterId === undefined ? settings.drafts.image.characterId : request.characterId;
   validateCharacter(characterId);
-  const inputAssetIds = [...new Set(references)];
-  const job = insertJob({ kind, prompt, characterId: characterId ?? null, inputAssetIds, modelId, aspectRatio, outputCount });
-  return job;
+  const inputAssetIds = [...new Set([...references, ...characterReferenceIds(characterId)])];
+  validateExistingAssets(inputAssetIds, 'image');
+  if (inputAssetIds.length > (model.referenceCap ?? 0)) throw new ClipsError('INVALID_INPUT', `${model.label} accepts up to ${model.referenceCap ?? 0} reference images.`);
+  return insertJob({ kind, prompt, characterId: characterId ?? null, inputAssetIds, modelId, aspectRatio, outputCount });
 }
 
 function prepareImageToVideoRequest(request: ImageToVideoRequest): GenerationJob {
   const settings = activeSettings();
   const prompt = request.prompt.trim();
   const modelId = request.modelId ?? settings.videoModelId;
-  const aspectRatio = validateAspectRatio(request.aspectRatio ?? settings.videoAspectRatio);
-  modelFor(modelId, 'video');
-  validateExistingAssets([request.sourceImageId], 'image');
+  const model = modelFor(modelId, 'video');
+  const aspectRatio = validateAspectRatio(request.aspectRatio ?? settings.videoAspectRatio, 'video');
+  const references = [...new Set([...(request.referenceAssetIds ?? settings.drafts.video.referenceAssetIds), ...(request.sourceImageId ? [request.sourceImageId] : [])])];
   const characterId = request.characterId === undefined ? settings.drafts.video.characterId : request.characterId;
   validateCharacter(characterId);
-  const job = insertJob({
-    kind: 'video',
-    prompt,
-    characterId: characterId ?? null,
-    inputAssetIds: [request.sourceImageId],
-    modelId,
-    aspectRatio,
-    outputCount: 1,
-  });
-  return job;
+  const inputAssetIds = [...new Set([...references, ...characterReferenceIds(characterId)])];
+  validateExistingAssets(inputAssetIds, 'image');
+  if (inputAssetIds.length > (model.referenceCap ?? 0)) throw new ClipsError('INVALID_INPUT', `${model.label} accepts up to ${model.referenceCap ?? 0} reference images for video.`);
+  return insertJob({ kind: 'video', prompt, characterId: characterId ?? null, inputAssetIds, modelId, aspectRatio, outputCount: 1 });
 }
 
 function findJob(id: EntityId): GenerationJob {
@@ -913,6 +1121,10 @@ function sendMenuAction(action: NativeMenuAction): void {
 
 function rebuildApplicationMenu(locale: Locale): void {
   menuLocale = locale;
+  if (process.platform === 'win32') {
+    Menu.setApplicationMenu(null);
+    return;
+  }
   const copy = MENU_COPY[locale];
   app.setAboutPanelOptions({
     applicationName: 'Clips',
@@ -936,8 +1148,6 @@ function rebuildApplicationMenu(locale: Locale): void {
   const viewItems: MenuItemConstructorOptions[] = [
     { id: 'clips-create', label: copy.create, click: () => sendMenuAction('create') },
     { id: 'clips-characters', label: copy.characters, click: () => sendMenuAction('characters') },
-    { id: 'clips-images', label: copy.images, click: () => sendMenuAction('images') },
-    { id: 'clips-videos', label: copy.videos, click: () => sendMenuAction('videos') },
     { id: 'clips-library', label: copy.library, click: () => sendMenuAction('library') },
     { id: 'clips-queue', label: copy.queue, click: () => sendMenuAction('queue') },
     { type: 'separator' },
@@ -1064,7 +1274,10 @@ function createWindow(): void {
     ...bounds,
     minWidth: Math.min(880, bounds.width),
     minHeight: Math.min(640, bounds.height),
-    backgroundColor: '#171719',
+    backgroundColor: '#111110',
+    icon: app.isPackaged ? path.join(process.resourcesPath, 'app-icon.png') : path.resolve(__dirname, '../../assets/clips.png'),
+    titleBarStyle: process.platform === 'win32' ? 'hidden' : undefined,
+    titleBarOverlay: process.platform === 'win32' ? { color: '#111110', symbolColor: '#f1efe9', height: 42 } : undefined,
     show: false,
     title: 'Clips',
     webPreferences: {
@@ -1199,6 +1412,40 @@ async function readStorageSummary(): Promise<StorageSummary> {
 function registerIpc(): void {
   handle(IPC_CHANNELS.getSnapshot, TRUSTED_NO_INPUT, () => getSnapshot());
   handle(IPC_CHANNELS.getStorageSummary, TRUSTED_NO_INPUT, readStorageSummary);
+  handle(IPC_CHANNELS.connectFlow, TRUSTED_NO_INPUT, async () => {
+    if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google Flow sign-in is unavailable in the local test provider.');
+
+    if (capabilities.status === 'unavailable' || capabilities.models.length === 0) {
+      await loadFlowProvider();
+    }
+    if (capabilities.status === 'unavailable') {
+      throw new ClipsError('PROVIDER_UNAVAILABLE', capabilities.detail);
+    }
+
+    capabilities = { ...capabilities, status: 'checking', detail: 'Complete Google sign-in in the secure browser window.' };
+    publishSnapshot();
+    try {
+      await flowCli.login();
+      const email = await flowCli.verifySession();
+      capabilities = { ...capabilities, status: 'ready', detail: 'Google Flow is connected through gflow-cli.' };
+      saveFlowAccount(email || 'Google Flow', 'connected');
+      await mustStore().flush();
+      publishSnapshot();
+      return capabilities;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Google Flow sign-in could not be completed.';
+      const unavailable = message.includes('gflow-cli is not installed') || message.includes('Could not start gflow-cli');
+      capabilities = {
+        ...capabilities,
+        status: unavailable ? 'unavailable' : 'needs-login',
+        detail: message,
+      };
+      saveFlowAccount('Google Flow', 'needs-login');
+      await mustStore().flush();
+      publishSnapshot();
+      throw new ClipsError('PROVIDER_UNAVAILABLE', message);
+    }
+  });
   handle(IPC_CHANNELS.openDataFolder, TRUSTED_NO_INPUT, async () => {
     const error = await shell.openPath(app.getPath('userData'));
     if (error) throw new ClipsError('STORAGE_ERROR', 'Clips could not open its local data folder.');
@@ -1214,29 +1461,6 @@ function registerIpc(): void {
   });
 
   handle(IPC_CHANNELS.importPaths, IpcSchema.importPaths, ({ paths }) => importPaths(paths, importContext('import')));
-
-  handle(IPC_CHANNELS.importFlowFiles, IpcSchema.flowImport, async (input: FlowImportInput) => {
-    const settings = activeSettings();
-    const activeAccount = mustStore().one('SELECT * FROM accounts WHERE id = ?', [settings.activeAccountId]);
-    if (!activeAccount || text(activeAccount, 'provider') !== 'google-flow') {
-      throw new ClipsError('PROVIDER_UNAVAILABLE', 'Choose a Google Flow account label before importing Flow downloads.');
-    }
-    const selection = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Import downloads from Flow',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Images and video', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'mp4', 'mov', 'webm'] }],
-    });
-    const context: ImportContext = {
-      source: 'flow-handoff',
-      provider: 'google-flow',
-      accountId: settings.activeAccountId,
-      prompt: input.prompt ?? null,
-      modelId: null,
-      sourceAssetIds: input.sourceAssetIds ?? [],
-      characterId: input.characterId ?? null,
-    };
-    return importPaths(selection.filePaths, context);
-  });
 
   handle(IPC_CHANNELS.pasteClipboardImage, TRUSTED_NO_INPUT, async () => {
     let clipboardItems;
@@ -1281,7 +1505,7 @@ function registerIpc(): void {
     validateExistingAssets(draft.referenceAssetIds, 'image');
     if (draft.sourceImageId) validateExistingAssets([draft.sourceImageId], 'image');
     modelFor(draft.modelId, mode);
-    validateAspectRatio(draft.aspectRatio);
+    validateAspectRatio(draft.aspectRatio, mode);
     settings.drafts[mode] = { ...draft };
     mustStore().setSetting('app', settings);
     await flushAndPublish();
@@ -1301,8 +1525,8 @@ function registerIpc(): void {
     const settings = activeSettings();
     if (patch.imageModelId) modelFor(patch.imageModelId, 'image');
     if (patch.videoModelId) modelFor(patch.videoModelId, 'video');
-    if (patch.imageAspectRatio) validateAspectRatio(patch.imageAspectRatio);
-    if (patch.videoAspectRatio) validateAspectRatio(patch.videoAspectRatio);
+    if (patch.imageAspectRatio) validateAspectRatio(patch.imageAspectRatio, 'image');
+    if (patch.videoAspectRatio) validateAspectRatio(patch.videoAspectRatio, 'video');
     Object.assign(settings, patch);
     settings.drafts.image = {
       ...settings.drafts.image,
@@ -1403,18 +1627,20 @@ function registerIpc(): void {
   });
 
   handle(IPC_CHANNELS.generateImage, IpcSchema.generate, async (request: GenerationRequest) => {
+    assertFlowReady();
     const job = prepareGenerationRequest(request, 'image');
     await mustStore().flush();
     publishSnapshot();
-    startMockJob(job.id);
+    if (job.provider === 'mock') startMockJob(job.id); else startFlowJob(job.id);
     return job;
   });
 
   handle(IPC_CHANNELS.generateVideo, IpcSchema.imageToVideo, async (request: ImageToVideoRequest) => {
+    assertFlowReady();
     const job = prepareImageToVideoRequest(request);
     await mustStore().flush();
     publishSnapshot();
-    startMockJob(job.id);
+    if (job.provider === 'mock') startMockJob(job.id); else startFlowJob(job.id);
     return job;
   });
 
@@ -1435,69 +1661,18 @@ function registerIpc(): void {
     });
     await mustStore().flush();
     publishSnapshot();
-    startMockJob(retry.id);
+    if (retry.provider === 'mock') startMockJob(retry.id); else startFlowJob(retry.id);
     return retry;
   });
 
   handle(IPC_CHANNELS.cancelJob, z.object({ id: IpcSchema.id }).strict(), async ({ id }: { id: EntityId }) => {
     const db = mustStore();
     const job = findJob(id);
+    if (job.provider === 'google-flow' && (job.status === 'queued' || job.status === 'running')) throw new ClipsError('JOB_NOT_CANCELLABLE', 'Flow may already be processing this request. Check Flow before retrying it.');
     if (job.status !== 'queued' && job.status !== 'running') throw new ClipsError('JOB_NOT_CANCELLABLE', 'That job has already finished.');
     db.run("UPDATE jobs SET status = 'cancelled', progress = 0, stage = 'Cancelled', completed_at = ?, error = NULL WHERE id = ?", [nowIso(), id]);
     await flushAndPublish();
     return findJob(id);
-  });
-
-  handle(IPC_CHANNELS.addAccount, IpcSchema.addAccount, async ({ provider, label }) => {
-    const db = mustStore();
-    const id = randomUUID();
-    const account: ProviderAccount = {
-      id,
-      provider,
-      label: label.trim(),
-      connection: provider === 'mock' ? 'mock-ready' : 'browser-handoff',
-      createdAt: nowIso(),
-    };
-    db.run('INSERT INTO accounts (id, provider, label, connection, created_at) VALUES (?, ?, ?, ?, ?)', [
-      account.id, account.provider, account.label, account.connection, account.createdAt,
-    ]);
-    await flushAndPublish();
-    return account;
-  });
-
-  handle(IPC_CHANNELS.switchAccount, IpcSchema.switchAccount, async ({ accountId }) => {
-    const account = mustStore().one('SELECT * FROM accounts WHERE id = ?', [accountId]);
-    if (!account) throw new ClipsError('NOT_FOUND', 'That account label is no longer available.');
-    setAccountInSettings(accountId);
-    await flushAndPublish();
-    return accountFromRow(account);
-  });
-
-  handle(IPC_CHANNELS.removeAccount, IpcSchema.removeAccount, async ({ accountId }) => {
-    const db = mustStore();
-    const existing = db.one('SELECT * FROM accounts WHERE id = ?', [accountId]);
-    if (!existing) throw new ClipsError('NOT_FOUND', 'That account label is no longer available.');
-    const accounts = db.all('SELECT * FROM accounts ORDER BY created_at ASC, rowid ASC');
-    if (accounts.length < 2) throw new ClipsError('ACCOUNT_IN_USE', 'Keep at least one provider profile in Clips.');
-    const usage = db.one(
-      'SELECT (SELECT COUNT(*) FROM assets WHERE account_id = ?) + (SELECT COUNT(*) FROM jobs WHERE account_id = ?) AS total',
-      [accountId, accountId],
-    );
-    if (numberValue(usage ?? {}, 'total') > 0) {
-      throw new ClipsError('ACCOUNT_IN_USE', 'This account is named in your saved history. Switch accounts and keep the label to preserve that history.');
-    }
-    const settings = activeSettings();
-    db.run('DELETE FROM accounts WHERE id = ?', [accountId]);
-    if (settings.activeAccountId === accountId) {
-      const replacement = accounts.find((item) => text(item, 'id') !== accountId)!;
-      settings.activeAccountId = text(replacement, 'id');
-      db.setSetting('app', settings);
-    }
-    await flushAndPublish();
-  });
-
-  handle(IPC_CHANNELS.openFlow, TRUSTED_NO_INPUT, async () => {
-    await shell.openExternal(FLOW_URL);
   });
 
   handle(IPC_CHANNELS.revealAsset, z.object({ id: IpcSchema.id }).strict(), async ({ id }: { id: EntityId }) => {
@@ -1522,6 +1697,7 @@ async function initialize(): Promise<void> {
   registerIpc();
   createWindow();
   resumeJobs();
+  if (!MOCK_PROVIDER_ENABLED) void loadFlowProvider();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

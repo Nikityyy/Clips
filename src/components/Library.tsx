@@ -1,25 +1,21 @@
 'use client';
 
 import { useMemo, useState, type DragEvent } from 'react';
-import { ArrowDownUp, Download, FileUp, FolderOpen, Images, ListChecks, Plus, Search, X } from 'lucide-react';
+import { ArrowDownUp, FileUp, FolderOpen, Images, ListChecks, Plus, Search, X } from 'lucide-react';
 import type { AppSnapshot, Asset, AssetKind } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { dateTime, fileSize } from '@/lib/i18n';
 import { AssetDetails } from '@/components/Studio';
 import { Button, EmptyState, IconButton, Modal, SectionHeading } from '@/components/ui';
 
-export function LibraryWorkspace({ snapshot, kind, locale, t, busy, flowReady, hasFlowProfile, onKind, onImport, onImportFlow, onOpenProfiles, onPaste, onDrop, onReveal, onDelete, onUseReference, onUseVideoSource, onAssign }: {
+export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onImport, onPaste, onDrop, onReveal, onDelete, onUseReference, onUseVideoSource, onAssign }: {
   snapshot: AppSnapshot;
   kind: AssetKind | 'all';
   locale: 'en' | 'de';
   t: Translate;
   busy: boolean;
-  flowReady: boolean;
-  hasFlowProfile: boolean;
   onKind: (kind: AssetKind | 'all') => void;
   onImport: () => void;
-  onImportFlow: () => void;
-  onOpenProfiles: () => void;
   onPaste: () => void;
   onDrop: (files: readonly File[]) => void;
   onReveal: (asset: Asset) => void;
@@ -55,7 +51,7 @@ export function LibraryWorkspace({ snapshot, kind, locale, t, busy, flowReady, h
   return (
     <main className={`workspace-content library-workspace ${dragging ? 'is-drop-target' : ''}`} id="workspace-content" tabIndex={-1}>
       <div className="library-drop-region" role="presentation" onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={handleDrop}>
-      <SectionHeading title={t(kind === 'all' ? 'nav.library' : kind === 'image' ? 'nav.images' : 'nav.videos')} action={<div className="library-header-actions"><Button variant="secondary" icon={FileUp} disabled={busy} onClick={onImport}>{t('library.import')}</Button><Button variant="quiet" icon={Images} disabled={busy} onClick={onPaste}>{t('library.paste')}</Button><Button variant="quiet" icon={Download} disabled={busy} aria-label={t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')} title={t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')} onClick={flowReady ? onImportFlow : onOpenProfiles}><span className="flow-import-label-full">{t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')}</span><span className="flow-import-label-compact">{t('library.flowShort')}</span></Button></div>}>
+      <SectionHeading title={t(kind === 'all' ? 'nav.library' : kind === 'image' ? 'nav.images' : 'nav.videos')} action={<div className="library-header-actions"><Button variant="secondary" icon={FileUp} disabled={busy} onClick={onImport}>{t('library.import')}</Button><Button variant="quiet" icon={Images} disabled={busy} onClick={onPaste}>{t('library.paste')}</Button></div>}>
         <p>{t('library.items', { count: new Intl.NumberFormat(locale).format(filtered.length) })}</p>
       </SectionHeading>
 

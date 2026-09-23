@@ -4,11 +4,11 @@ import { z } from 'zod';
 export type EntityId = string;
 export type Locale = 'en' | 'de';
 export type AssetKind = 'image' | 'video';
-export type AssetSource = 'import' | 'clipboard' | 'mock' | 'flow-handoff';
+export type AssetSource = 'import' | 'clipboard' | 'mock' | 'flow-handoff' | 'flow-generation';
 export type ProviderKind = 'mock' | 'google-flow';
 export type JobKind = 'image' | 'video';
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type NativeMenuAction = 'import' | 'create' | 'characters' | 'images' | 'videos' | 'library' | 'queue' | 'settings';
+export type NativeMenuAction = 'import' | 'create' | 'characters' | 'library' | 'queue' | 'settings';
 
 /** Fixed invoke/event routes shared by the isolated preload and the main process. */
 export const IPC_CHANNELS = {
@@ -18,7 +18,6 @@ export const IPC_CHANNELS = {
   getStorageSummary: 'clips:get-storage-summary',
   openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
-  importFlowFiles: 'clips:import-flow-files',
   importPaths: 'clips:import-paths',
   pasteClipboardImage: 'clips:paste-clipboard-image',
   saveDraft: 'clips:save-draft',
@@ -34,10 +33,7 @@ export const IPC_CHANNELS = {
   generateVideo: 'clips:generate-video',
   retryJob: 'clips:retry-job',
   cancelJob: 'clips:cancel-job',
-  addAccount: 'clips:add-account',
-  switchAccount: 'clips:switch-account',
-  removeAccount: 'clips:remove-account',
-  openFlow: 'clips:open-flow',
+  connectFlow: 'clips:connect-flow',
   revealAsset: 'clips:reveal-asset',
 } as const;
 
@@ -102,17 +98,14 @@ export interface GenerationRequest {
 
 export interface ImageToVideoRequest {
   prompt: string;
-  sourceImageId: EntityId;
+  referenceAssetIds?: EntityId[];
+  /** Read old saved drafts and callers; new video work uses referenceAssetIds. */
+  sourceImageId?: EntityId | null;
   characterId?: EntityId | null;
   modelId?: string;
   aspectRatio?: string;
 }
 
-export interface FlowImportInput {
-  prompt?: string;
-  sourceAssetIds?: EntityId[];
-  characterId?: EntityId | null;
-}
 
 export interface GenerationJob {
   id: EntityId;
@@ -128,7 +121,7 @@ export interface GenerationJob {
   aspectRatio: string;
   outputCount: number;
   accountId: EntityId | null;
-  provider: 'mock';
+  provider: ProviderKind;
   error: string | null;
   retryOfJobId: EntityId | null;
   createdAt: string;
@@ -143,7 +136,7 @@ export interface ProviderAccount {
   provider: ProviderKind;
   label: string;
   /** Flow accounts are labels only: Clips stores no cookies or Google tokens. */
-  connection: 'mock-ready' | 'browser-handoff';
+  connection: 'mock-ready' | 'needs-login' | 'connected' | 'browser-handoff';
   createdAt: string;
 }
 
@@ -154,16 +147,23 @@ export interface ProviderModel {
   description: string;
   supportsReferences: boolean;
   supportsCharacter: boolean;
-  creditCost: 0;
+  aliases?: string[];
+  referenceCap?: number;
+  maxDuration?: number | null;
+  creditCost: number | null;
 }
 
 export interface ProviderCapabilities {
-  provider: 'mock';
+  provider: ProviderKind;
+  status: 'mock-ready' | 'unavailable' | 'needs-login' | 'checking' | 'ready';
   label: string;
   detail: string;
   models: ProviderModel[];
+  imageAspectRatios: string[];
+  videoAspectRatios: string[];
+  profileName: string | null;
   supportsImageToVideo: boolean;
-  creditCost: 0;
+  creditCost: number | null;
 }
 
 export interface Settings {
@@ -202,7 +202,6 @@ export type ErrorCode =
   | 'PROVIDER_UNAVAILABLE'
   | 'JOB_NOT_RETRYABLE'
   | 'JOB_NOT_CANCELLABLE'
-  | 'ACCOUNT_IN_USE'
   | 'PERMISSION_DENIED'
   | 'INTERNAL';
 
@@ -246,11 +245,6 @@ export interface UpdateCharacterInput {
   referenceAssetIds?: EntityId[];
 }
 
-export interface AddAccountInput {
-  provider: ProviderKind;
-  label: string;
-}
-
 export interface SettingsPatch {
   locale?: Locale;
   imageModelId?: string;
@@ -275,8 +269,6 @@ export interface ClipsApi {
   subscribeMenuAction(listener: (action: NativeMenuAction) => void): () => void;
 
   importFiles(): Promise<Result<ImportSummary>>;
-  /** Import files manually downloaded from the official Flow site and label their origin. */
-  importFlowFiles(input?: FlowImportInput): Promise<Result<ImportSummary>>;
   importDroppedFiles(files: readonly File[]): Promise<Result<ImportSummary>>;
   pasteClipboardImage(): Promise<Result<ImportSummary>>;
 
@@ -297,18 +289,14 @@ export interface ClipsApi {
   retryJob(jobId: EntityId): Promise<Result<GenerationJob>>;
   cancelJob(jobId: EntityId): Promise<Result<GenerationJob>>;
 
-  addAccount(input: AddAccountInput): Promise<Result<ProviderAccount>>;
-  switchAccount(accountId: EntityId): Promise<Result<ProviderAccount>>;
-  removeAccount(accountId: EntityId): Promise<Result<void>>;
-
-  openFlow(): Promise<Result<void>>;
+  connectFlow(): Promise<Result<ProviderCapabilities>>;
   revealAsset(assetId: EntityId): Promise<Result<void>>;
 }
 
 const entityId = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/);
 const nonEmpty = (max: number) => z.string().min(1).max(max).refine((value) => value.trim().length > 0);
 const localeSchema = z.enum(['en', 'de']);
-const ratioSchema = z.enum(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9']);
+const ratioSchema = z.string().regex(/^\d{1,3}:\d{1,3}$/);
 const modelIdSchema = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_.-]+$/);
 
 export const IpcSchema = {
@@ -316,11 +304,6 @@ export const IpcSchema = {
   mode: z.enum(['image', 'video']),
   locale: localeSchema,
   importPaths: z.object({ paths: z.array(z.string().min(1).max(4096)).max(20) }).strict(),
-  flowImport: z.object({
-    prompt: z.string().max(20000).optional(),
-    sourceAssetIds: z.array(entityId).max(12).optional(),
-    characterId: entityId.nullable().optional(),
-  }).strict(),
   saveDraft: z.object({
     mode: z.enum(['image', 'video']),
     draft: z.object({
@@ -351,7 +334,8 @@ export const IpcSchema = {
   }).strict(),
   imageToVideo: z.object({
     prompt: nonEmpty(20000),
-    sourceImageId: entityId,
+    sourceImageId: entityId.nullable().optional(),
+    referenceAssetIds: z.array(entityId).max(12).optional(),
     characterId: entityId.nullable().optional(),
     modelId: modelIdSchema.optional(),
     aspectRatio: ratioSchema.optional(),
@@ -374,9 +358,6 @@ export const IpcSchema = {
     }).strict(),
   }).strict(),
   assignCharacter: z.object({ assetId: entityId, characterId: entityId.nullable() }).strict(),
-  addAccount: z.object({ provider: z.enum(['mock', 'google-flow']), label: nonEmpty(80) }).strict(),
-  switchAccount: z.object({ accountId: entityId }).strict(),
-  removeAccount: z.object({ accountId: entityId }).strict(),
 } as const;
 
 declare global {

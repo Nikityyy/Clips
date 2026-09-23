@@ -1,3 +1,5 @@
 # Third-party notices
 
-Clips uses the Mukta Mahee typeface from Ek Type, distributed by Fontsource under the SIL Open Font License 1.1. The font is bundled in the application; its license and copyright notice are available at `public/licenses/OFL-1.1-Mukta-Mahee.txt` and in the built application at `licenses/OFL-1.1-Mukta-Mahee.txt`. The Apache license and this notice file are included in the packaged app resources under `licenses/`.
+Clips uses the Manrope variable typeface, copyright 2019 The Manrope Project Authors, distributed by Fontsource under the SIL Open Font License 1.1. The bundled font files are available in the application, and the complete license is included at `licenses/OFL-1.1-Manrope.txt` in the packaged application resources.
+
+Clips uses Lucide icons via `lucide-react`, including Lucide’s Clapperboard app mark. Lucide React is distributed under the ISC License; the package license and included icon attribution notices are available at `licenses/ISC-LUCIDE.txt` in the packaged application resources.

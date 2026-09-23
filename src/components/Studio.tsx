@@ -2,18 +2,16 @@
 
 import { useState, type DragEvent } from 'react';
 import {
-  ArrowDownToLine, ArrowRight, Check, Clapperboard, FileImage, Film, FolderOpen, ImagePlus,
-  Images, Info, Minus, MoreHorizontal, Plus, Sparkles, Trash2, UserRound, X,
+  ArrowDownToLine, Check, Clapperboard, FileImage, Film, FolderOpen, ImagePlus,
+  Images, Info, Minus, Plus, Sparkles, Trash2, UserRound, X,
 } from 'lucide-react';
 import type { AppSnapshot, Asset, GenerationDraft, GenerationJob, JobKind } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { dateTime, durationLabel, fileSize } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
-import { Button, EmptyState, FieldLabel, IconButton, Modal, SectionHeading } from '@/components/ui';
+import { Button, EmptyState, FieldLabel, IconButton, MenuSelect, Modal, SectionHeading } from '@/components/ui';
 
-const ratios = ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'];
-
-export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters }: {
+export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters, onConnectFlow }: {
   snapshot: AppSnapshot;
   mode: JobKind;
   draft: GenerationDraft;
@@ -26,13 +24,17 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
   onDrop: (files: readonly File[]) => void;
   onCreate: () => void;
   onCharacters: () => void;
+  onConnectFlow: () => void;
 }) {
-  const [picker, setPicker] = useState<'references' | 'source' | null>(null);
+  const [picker, setPicker] = useState<'references' | null>(null);
   const [dragging, setDragging] = useState(false);
   const character = snapshot.characters.find((item) => item.id === draft.characterId) ?? null;
-  const imageModel = snapshot.capabilities.models.find((item) => item.kind === mode) ?? snapshot.capabilities.models[0];
+  const modeModels = snapshot.capabilities.models.filter((item) => item.kind === mode);
+  const model = modeModels.find((item) => item.id === draft.modelId) ?? modeModels[0];
+  const aspectRatios = mode === 'image' ? snapshot.capabilities.imageAspectRatios : snapshot.capabilities.videoAspectRatios;
+  const maxReferences = model?.referenceCap ?? 0;
+  const maxOutputs = snapshot.capabilities.provider === 'google-flow' ? 4 : 6;
   const selectedReferences = snapshot.assets.filter((asset) => draft.referenceAssetIds.includes(asset.id) && asset.kind === 'image');
-  const source = snapshot.assets.find((asset) => asset.id === draft.sourceImageId && asset.kind === 'image');
   const outputLabel = t(draft.outputCount === 1 ? 'common.count.one' : 'common.count.other', { count: draft.outputCount });
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -52,7 +54,7 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
   const toggleReference = (assetId: string) => {
     const references = draft.referenceAssetIds.includes(assetId)
       ? draft.referenceAssetIds.filter((id) => id !== assetId)
-      : [...draft.referenceAssetIds, assetId].slice(0, 12);
+      : draft.referenceAssetIds.length >= maxReferences ? draft.referenceAssetIds : [...draft.referenceAssetIds, assetId].slice(0, maxReferences);
     onDraft({ referenceAssetIds: references });
   };
 
@@ -60,7 +62,7 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
     <div className={`composer-panel ${dragging ? 'is-drop-target' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={handleDrop}>
       <div className="composer-panel-heading">
         <div><span className="composer-eyebrow">{t('header.create')}</span><h2>{t(mode === 'image' ? 'create.imageTitle' : 'create.videoTitle')}</h2></div>
-        <span className="composer-local-pill"><span />{t('create.cost')}</span>
+        <button type="button" className={`composer-local-pill ${snapshot.capabilities.status === 'ready' || snapshot.capabilities.status === 'mock-ready' ? 'is-connected' : 'needs-connection'}`} onClick={snapshot.capabilities.status === 'ready' || snapshot.capabilities.status === 'mock-ready' ? undefined : onConnectFlow} disabled={busy || snapshot.capabilities.status === 'checking'}><span />{t(snapshot.capabilities.status === 'ready' ? 'account.statusReady' : snapshot.capabilities.status === 'mock-ready' ? 'account.statusLocal' : snapshot.capabilities.status === 'checking' ? 'account.statusChecking' : snapshot.capabilities.status === 'unavailable' ? 'account.statusUnavailable' : 'account.statusNeedsLogin')}</button>
       </div>
 
       <fieldset className="mode-switch">
@@ -69,13 +71,15 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
         <button type="button" className={mode === 'video' ? 'is-active' : ''} aria-pressed={mode === 'video'} onClick={() => onMode('video')}><Film size={15} aria-hidden="true" />{t('create.modeVideo')}</button>
       </fieldset>
 
-      {mode === 'video' ? <section className="composer-field source-frame-field">
-        <FieldLabel>{t('create.sourceFrame')}</FieldLabel>
-        {source ? <div className="source-frame-preview"><img src={source.uri} alt={source.title} /><div><strong>{source.title}</strong><span>{source.width && source.height ? `${source.width} × ${source.height}` : t('common.unknown')}</span></div><IconButton label={t('common.clear')} icon={X} size="small" onClick={() => onDraft({ sourceImageId: null })} /></div>
-          : <button type="button" className="source-frame-empty" onClick={() => setPicker('source')}><ImagePlus size={17} aria-hidden="true" /><span>{t('create.chooseFrame')}</span><ArrowRight size={14} aria-hidden="true" /></button>}
-        {!source ? <p className="composer-hint">{t('create.videoStart')}</p> : null}
-      </section> : null}
-
+      <section className={`composer-field reference-field ${mode === 'video' ? 'video-reference-field' : ''}`}>
+        <div className="composer-section-line"><FieldLabel>{t(mode === 'video' ? 'create.videoReferences' : 'create.references')}</FieldLabel><span className="field-hint">{model && maxReferences > 0 ? `${selectedReferences.length} / ${maxReferences}` : model ? t('create.referencesUnsupported') : ''}</span></div>
+        {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : <p className="composer-hint">{model && maxReferences === 0 ? t('create.referencesUnsupported') : t(mode === 'video' ? 'create.videoReferenceHint' : 'create.referenceHint')}</p>}
+        <div className="reference-actions">
+          <Button size="small" variant="secondary" icon={Plus} className="picker-select-button" disabled={!maxReferences} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button>
+          <Button size="small" variant="quiet" icon={FolderOpen} onClick={onImport}>{t('create.importReference')}</Button>
+          <Button size="small" variant="quiet" icon={FileImage} onClick={onPaste}>{t('create.pasteReference')}</Button>
+        </div>
+      </section>
       <section className="composer-field prompt-field">
         <div className="field-label-row"><label className="field-label" htmlFor="generation-prompt">{t('create.writePrompt')}</label><span className="field-hint">{new Intl.NumberFormat(snapshot.settings.locale).format(draft.prompt.length)} / 20,000</span></div>
         <textarea id="generation-prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
@@ -83,40 +87,27 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
       </section>
 
       <section className="composer-field">
-        <FieldLabel htmlFor="create-character">{t('create.character')}</FieldLabel>
-        <div className="composer-inline-control"><select id="create-character" className="select-control composer-select" value={draft.characterId ?? ''} onChange={(event) => onDraft({ characterId: event.currentTarget.value || null })}><option value="">{t('create.noCharacter')}</option>{snapshot.characters.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
+        <FieldLabel>{t('create.character')}</FieldLabel>
+        <div className="composer-inline-control"><MenuSelect className="composer-select" label={t('create.character')} value={draft.characterId ?? ''} options={[{ value: '', label: t('create.noCharacter') }, ...snapshot.characters.map((item) => ({ value: item.id, label: item.name, description: item.description || t('character.noDescription'), imageUrl: snapshot.assets.find((asset) => asset.id === item.portraitAssetId)?.uri }))]} onChange={(value) => onDraft({ characterId: value || null })} /><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
       </section>
 
-      {mode === 'image' ? <section className="composer-field">
-        <div className="composer-section-line"><FieldLabel>{t('create.references')}</FieldLabel><span className="field-hint">{selectedReferences.length} / 12</span></div>
-        {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : null}
-        <div className="reference-actions">
-          <Button size="small" variant="secondary" icon={Plus} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button>
-          <details className="reference-more-menu">
-            <summary aria-label={t('create.moreReferenceOptions')} title={t('create.moreReferenceOptions')}><MoreHorizontal size={17} aria-hidden="true" /></summary>
-            <div className="reference-menu-actions">
-              <button type="button" onClick={onImport}><FolderOpen size={15} aria-hidden="true" />{t('create.importReference')}</button>
-              <button type="button" onClick={onPaste}><FileImage size={15} aria-hidden="true" />{t('create.pasteReference')}</button>
-            </div>
-          </details>
+      <section className="composer-field generation-options">
+        <div className="composer-field">
+          <FieldLabel>{t('create.model')}</FieldLabel>
+          <MenuSelect className="composer-select" label={t('create.model')} value={draft.modelId} options={modeModels.map((item) => ({ value: item.id, label: item.label, description: item.referenceCap ? t('create.modelReferenceCap', { count: item.referenceCap }) : undefined }))} onChange={(value) => onDraft({ modelId: value, referenceAssetIds: draft.referenceAssetIds.slice(0, modeModels.find((item) => item.id === value)?.referenceCap ?? 0) })} disabled={!modeModels.length} />
         </div>
-        <p className="composer-hint">{t('create.referenceHint')}</p>
-        {dragging ? <div className="composer-drop-overlay" aria-live="polite">{t('create.dropHere')}</div> : null}
-      </section> : null}
-
-      <details className="composer-advanced">
-        <summary>{t('create.moreOptions', { ratio: draft.aspectRatio })}</summary>
-        <div className="composer-control-grid">
-          <div className="composer-field"><FieldLabel htmlFor="create-model">{t('create.model')}</FieldLabel><select id="create-model" className="select-control composer-select" value={draft.modelId} onChange={(event) => onDraft({ modelId: event.currentTarget.value })}>{snapshot.capabilities.models.filter((item) => item.kind === mode).map((item) => <option key={item.id} value={item.id}>{item.id === 'mock-image' ? t('model.portraitStudy') : item.id === 'mock-video' ? t('model.motionStudy') : item.label}</option>)}</select><p className="composer-hint">{imageModel.id === 'mock-image' ? t('create.modelDetailImage') : t('create.modelDetailVideo')}</p></div>
-          <div className="composer-field"><FieldLabel htmlFor="create-ratio">{t('create.ratio')}</FieldLabel><select id="create-ratio" className="select-control composer-select" value={draft.aspectRatio} onChange={(event) => onDraft({ aspectRatio: event.currentTarget.value })}>{ratios.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></div>
+        <div className="composer-field">
+          <FieldLabel>{t('create.ratio')}</FieldLabel>
+          <div className="ratio-options" role="group" aria-label={t('create.ratio')}>
+            {aspectRatios.map((ratio) => <button key={ratio} type="button" className={draft.aspectRatio === ratio ? 'is-selected' : ''} aria-pressed={draft.aspectRatio === ratio} onClick={() => onDraft({ aspectRatio: ratio })}>{ratio}</button>)}
+          </div>
         </div>
-      </details>
+      </section>
+      {mode === 'image' ? <section className="composer-field output-count-field"><FieldLabel>{t('create.outputs')}</FieldLabel><div className="count-control"><button type="button" aria-label={t('create.decreaseOutputs')} disabled={draft.outputCount <= 1} onClick={() => onDraft({ outputCount: Math.max(1, draft.outputCount - 1) })}><Minus size={14} aria-hidden="true" /></button><output aria-live="polite">{outputLabel}</output><button type="button" aria-label={t('create.increaseOutputs')} disabled={draft.outputCount >= maxOutputs} onClick={() => onDraft({ outputCount: Math.min(maxOutputs, draft.outputCount + 1) })}><Plus size={14} aria-hidden="true" /></button></div></section> : null}
 
-      {mode === 'image' ? <section className="composer-field output-count-field"><FieldLabel>{t('create.outputs')}</FieldLabel><div className="count-control"><button type="button" aria-label={t('create.decreaseOutputs')} disabled={draft.outputCount <= 1} onClick={() => onDraft({ outputCount: Math.max(1, draft.outputCount - 1) })}><Minus size={14} aria-hidden="true" /></button><output aria-live="polite">{outputLabel}</output><button type="button" aria-label={t('create.increaseOutputs')} disabled={draft.outputCount >= 6} onClick={() => onDraft({ outputCount: Math.min(6, draft.outputCount + 1) })}><Plus size={14} aria-hidden="true" /></button></div></section> : null}
+      <div className="composer-panel-bottom"><p><Info size={14} aria-hidden="true" />{t(snapshot.capabilities.provider === 'google-flow' ? 'create.flowCreditHint' : 'create.localOnly')}</p><Button variant="primary" className="create-submit" icon={mode === 'image' ? Sparkles : Clapperboard} busy={busy} disabled={!draft.prompt.trim() || (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') || !model} onClick={onCreate}>{busy ? t('create.creating') : mode === 'image' ? t(draft.outputCount === 1 ? 'create.createImage' : 'create.createImages', { count: draft.outputCount }) : t('create.createVideo')}</Button></div>
 
-      <div className="composer-panel-bottom"><p><Info size={14} aria-hidden="true" />{t('create.localOnly')}</p><Button variant="primary" className="create-submit" icon={mode === 'image' ? Sparkles : Clapperboard} busy={busy} disabled={!draft.prompt.trim() || (mode === 'video' && !draft.sourceImageId)} onClick={onCreate}>{busy ? t('create.creating') : mode === 'image' ? t(draft.outputCount === 1 ? 'create.createImage' : 'create.createImages', { count: draft.outputCount }) : t('create.createVideo')}</Button></div>
-
-      {picker ? <AssetPicker snapshot={snapshot} selectedIds={picker === 'source' ? draft.sourceImageId ? [draft.sourceImageId] : [] : draft.referenceAssetIds} single={picker === 'source'} title={picker === 'source' ? t('create.chooseFrame') : t('create.chooseFromLibrary')} t={t} onClose={() => setPicker(null)} onConfirm={(ids) => { onDraft(picker === 'source' ? { sourceImageId: ids[0] ?? null } : { referenceAssetIds: ids }); setPicker(null); }} /> : null}
+      {picker ? <AssetPicker snapshot={snapshot} selectedIds={draft.referenceAssetIds} maxSelected={maxReferences} title={t(mode === 'video' ? 'create.chooseVideoReferences' : 'create.chooseFromLibrary')} t={t} onClose={() => setPicker(null)} onConfirm={(ids) => { onDraft({ referenceAssetIds: ids }); setPicker(null); }} /> : null}
     </div>
   );
 }
@@ -157,9 +148,8 @@ export function CreatorCanvas({ snapshot, mode, selectedAssetId, t, onSelect, on
           </button>
           <div className="result-card-actions"><IconButton label={t('studio.inspect')} icon={Info} size="small" onClick={() => onInspect(asset)} /><IconButton label={t('studio.useReference')} icon={ImagePlus} size="small" onClick={() => onUseReference(asset)} /><IconButton label={t('studio.makeVideo')} icon={Film} size="small" onClick={() => onUseVideoSource(asset)} /></div>
         </article>)}
-      </div> : <div className="canvas-empty"><EmptyState icon={mode === 'image' ? Images : Film} title={t('studio.emptyTitle')} body={t('studio.emptyBody')} action={<Button variant="quiet" icon={FolderOpen} onClick={onOpenLibrary}>{t('studio.openLibrary')}</Button>} /></div>}
+      </div> : <div className="canvas-empty"><EmptyState icon={mode === 'image' ? Images : Film} title={t(mode === 'image' ? 'studio.emptyTitleImage' : 'studio.emptyTitleVideo')} body={t(mode === 'image' ? 'studio.emptyBodyImage' : 'studio.emptyBodyVideo')} action={<Button variant="quiet" icon={FolderOpen} onClick={onOpenLibrary}>{t('studio.openLibrary')}</Button>} /></div>}
 
-      <div className="canvas-footer-line"><span /><p>{t('create.localOnly')}</p></div>
     </main>
   );
 }
@@ -210,21 +200,26 @@ export function RecentJobs({ jobs, t, onOpenQueue }: { jobs: GenerationJob[]; t:
   </div></section>;
 }
 
-export function AssetPicker({ snapshot, selectedIds, single = false, title, t, onClose, onConfirm }: {
+export function AssetPicker({ snapshot, selectedIds, maxSelected = 12, title, t, onClose, onConfirm }: {
   snapshot: AppSnapshot;
   selectedIds: string[];
-  single?: boolean;
+  maxSelected?: number;
   title: string;
   t: Translate;
   onClose: () => void;
   onConfirm: (ids: string[]) => void;
 }) {
   const [selected, setSelected] = useState<string[]>(selectedIds);
+  const [query, setQuery] = useState('');
   const assets = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === 'image');
-  const toggle = (id: string) => setSelected((current) => single ? current[0] === id ? [] : [id] : current.includes(id) ? current.filter((value) => value !== id) : [...current, id].slice(0, 12));
+  const filtered = assets.filter((asset) => asset.title.toLocaleLowerCase(snapshot.settings.locale).includes(query.toLocaleLowerCase(snapshot.settings.locale)));
+  const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : current.length >= maxSelected ? current : [...current, id]);
   return (
-    <Modal title={title} onClose={onClose} closeLabel={t('common.close')} wide footer={<div className="picker-footer"><span>{t('library.selectedCount', { count: new Intl.NumberFormat(snapshot.settings.locale).format(selected.length) })}</span><div><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" disabled={single ? selected.length !== 1 : false} onClick={() => onConfirm(selected)}>{t('common.done')}</Button></div></div>}>
-      {assets.length ? <div className="picker-grid">{assets.map((asset) => <button key={asset.id} className={`picker-item ${selected.includes(asset.id) ? 'is-selected' : ''}`} type="button" aria-pressed={selected.includes(asset.id)} onClick={() => toggle(asset.id)}><img src={asset.uri} alt="" /><span>{asset.title}</span><i>{selected.includes(asset.id) ? <Check size={14} /> : <Plus size={14} />}</i></button>)}</div> : <EmptyState icon={Images} title={t('library.emptyImagesTitle')} body={t('library.emptyBody')} />}
+    <Modal title={title} onClose={onClose} closeLabel={t('common.close')} wide className={`asset-picker-modal ${assets.length <= 5 ? 'is-compact' : ''}`} footer={<div className="picker-footer"><span>{t('library.selectedCount', { count: new Intl.NumberFormat(snapshot.settings.locale).format(selected.length) })}{maxSelected ? ` · ${t('create.referenceLimit', { count: maxSelected })}` : ''}</span><div><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" className="picker-confirm-button" onClick={() => onConfirm(selected)}>{t('common.done')}</Button></div></div>}>
+      <label className="picker-search"><Images size={16} aria-hidden="true" /><span className="visually-hidden">{t('common.search')}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('library.searchPlaceholder')} /><kbd>Ctrl F</kbd></label>
+      {filtered.length ? <div className="picker-grid">{filtered.map((asset) => <button key={asset.id} aria-label={asset.title} className={`picker-item ${selected.includes(asset.id) ? 'is-selected' : ''}`} type="button" aria-pressed={selected.includes(asset.id)} onClick={() => toggle(asset.id)} disabled={!selected.includes(asset.id) && selected.length >= maxSelected}>
+        <span className="picker-thumb"><img src={asset.uri} alt="" loading="lazy" /><i>{selected.includes(asset.id) ? <Check size={14} /> : <Plus size={14} />}</i></span><span className="picker-item-copy"><strong>{asset.title}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : t('common.unknown')}</small></span>
+      </button>)}</div> : <div className="picker-empty"><EmptyState icon={Images} title={assets.length ? t('library.emptySearch', { query }) : t('library.emptyImagesTitle')} body={!assets.length ? t('library.emptyBody') : undefined} action={!assets.length ? <Button onClick={onClose}>{t('common.done')}</Button> : undefined} /></div>}
     </Modal>
   );
 }
@@ -236,7 +231,7 @@ function AssetMedia({ asset, t, controls = false }: { asset: Asset; t: Translate
 }
 
 function Metadata({ label, value }: { label: string; value: string }) {
-  return <div className="metadata-row"><dt>{label}</dt><dd title={value}>{value}</dd></div>;
+  return <div className="metadata-row"><dt>{label}</dt><dd className="tooltip-trigger" data-tooltip={value}>{value}</dd></div>;
 }
 
 function JobProgress({ job, t }: { job: GenerationJob; t: Translate }) {
@@ -252,6 +247,6 @@ function sourceKey(source: Asset['provenance']['source']): 'source.import' | 'so
   if (source === 'import') return 'source.import';
   if (source === 'clipboard') return 'source.clipboard';
   if (source === 'mock') return 'source.mock';
-  if (source === 'flow-handoff') return 'source.flow';
+  if (source === 'flow-handoff' || source === 'flow-generation') return 'source.flow';
   return 'source.unknown';
 }

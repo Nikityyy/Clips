@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowUpRight, Clapperboard, Film, FolderClosed, Images, ListTodo, Settings2, Sparkles, UserRound, Users, X, type LucideIcon,
+  Clapperboard, FolderClosed, Images, ListTodo, Settings2, Sparkles, UserRound, Users, X, type LucideIcon,
 } from 'lucide-react';
-import type { AppSnapshot, Asset, Character, CreateCharacterInput, ErrorCode, GenerationDraft, GenerationJob, ImportIssue, JobKind, Locale, NativeMenuAction, ProviderAccount, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
+import type { AppSnapshot, Asset, Character, CreateCharacterInput, ErrorCode, GenerationDraft, GenerationJob, ImportIssue, JobKind, Locale, NativeMenuAction, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
 import type { Notice, Translate, View } from '@/lib/app-types';
 import { translate, type TranslationKey } from '@/lib/i18n';
 import { AccountsWorkspace, SettingsWorkspace } from '@/components/Workspace';
@@ -12,7 +12,7 @@ import { CharactersWorkspace } from '@/components/Characters';
 import { LibraryWorkspace } from '@/components/Library';
 import { QueueWorkspace } from '@/components/Queue';
 import { AssetDetails, CreatorCanvas, CreatorPanel } from '@/components/Studio';
-import { Button, IconButton, Modal } from '@/components/ui';
+import { Button, IconButton, MenuSelect, Modal } from '@/components/ui';
 
 const errorCopy: Record<ErrorCode, TranslationKey> = {
   INVALID_INPUT: 'error.invalid',
@@ -24,7 +24,6 @@ const errorCopy: Record<ErrorCode, TranslationKey> = {
   PROVIDER_UNAVAILABLE: 'error.provider',
   JOB_NOT_RETRYABLE: 'error.notRetryable',
   JOB_NOT_CANCELLABLE: 'error.notCancellable',
-  ACCOUNT_IN_USE: 'error.accountInUse',
   PERMISSION_DENIED: 'error.permission',
   INTERNAL: 'error.internal',
 };
@@ -32,8 +31,6 @@ const errorCopy: Record<ErrorCode, TranslationKey> = {
 const navDefinition = [
   { view: 'create', key: 'nav.create', icon: Sparkles },
   { view: 'characters', key: 'nav.characters', icon: Users },
-  { view: 'images', key: 'nav.images', icon: Images },
-  { view: 'videos', key: 'nav.videos', icon: Film },
   { view: 'library', key: 'nav.library', icon: FolderClosed },
   { view: 'queue', key: 'nav.queue', icon: ListTodo },
 ] as const;
@@ -42,10 +39,10 @@ export function ClipsApp() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [view, setView] = useState<View>('create');
+  const [libraryKind, setLibraryKind] = useState<'all' | 'image' | 'video'>('all');
   const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState('');
-  const [removeAccount, setRemoveAccount] = useState<ProviderAccount | null>(null);
   const [deleteCharacter, setDeleteCharacter] = useState<Character | null>(null);
   const [importIssues, setImportIssues] = useState<ImportIssue[] | null>(null);
   const [createMode, setCreateMode] = useState<JobKind>('image');
@@ -93,7 +90,26 @@ export function ClipsApp() {
     // oxlint-disable-next-line react/set-state-in-effect -- this effect hydrates the app snapshot from the local SQLite bridge.
     void load();
     if (!window.clips) return;
-    const unsubscribe = window.clips.subscribe((next) => setSnapshot((current) => current && current.revision > next.revision ? current : next));
+    const unsubscribe = window.clips.subscribe((next) => {
+      setSnapshot((current) => current && current.revision > next.revision ? current : next);
+      if (!draftsInitialized.current) return;
+      const imageModels = next.capabilities.models.filter((model) => model.kind === 'image');
+      const videoModels = next.capabilities.models.filter((model) => model.kind === 'video');
+      if (!imageModels.length || !videoModels.length) return;
+      setDrafts((current) => {
+        const base = current ?? next.settings.drafts;
+        const imageModelId = imageModels.some((model) => model.id === base.image.modelId) ? base.image.modelId : next.settings.drafts.image.modelId;
+        const videoModelId = videoModels.some((model) => model.id === base.video.modelId) ? base.video.modelId : next.settings.drafts.video.modelId;
+        const imageAspectRatio = next.capabilities.imageAspectRatios.includes(base.image.aspectRatio) ? base.image.aspectRatio : next.settings.drafts.image.aspectRatio;
+        const videoAspectRatio = next.capabilities.videoAspectRatios.includes(base.video.aspectRatio) ? base.video.aspectRatio : next.settings.drafts.video.aspectRatio;
+        if (imageModelId === base.image.modelId && videoModelId === base.video.modelId && imageAspectRatio === base.image.aspectRatio && videoAspectRatio === base.video.aspectRatio) return base;
+        return {
+          ...base,
+          image: { ...base.image, modelId: imageModelId, aspectRatio: imageAspectRatio },
+          video: { ...base.video, modelId: videoModelId, aspectRatio: videoAspectRatio },
+        };
+      });
+    });
     return () => unsubscribe();
   }, [load]);
 
@@ -106,6 +122,7 @@ export function ClipsApp() {
     setDrafts(snapshot.settings.drafts);
     draftsInitialized.current = true;
   }, [snapshot]);
+
 
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
@@ -150,23 +167,23 @@ export function ClipsApp() {
   const imageDraft = drafts?.image;
   const videoDraft = drafts?.video;
   useEffect(() => {
-    if (!draftsInitialized.current || !imageDraft || !window.clips) return;
+    if (!draftsInitialized.current || !imageDraft || !window.clips || !snapshot?.capabilities.models.some((model) => model.kind === 'image')) return;
     const timer = window.setTimeout(() => {
       void window.clips.saveDraft('image', imageDraft).then((result) => {
         if (!result.ok) announce(translate(locale, errorCopy[result.error.code]), 'error');
       }).catch(() => announce(translate(locale, 'settings.saveError'), 'error'));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [imageDraft, announce, locale]);
+  }, [imageDraft, announce, locale, snapshot?.capabilities.models]);
   useEffect(() => {
-    if (!draftsInitialized.current || !videoDraft || !window.clips) return;
+    if (!draftsInitialized.current || !videoDraft || !window.clips || !snapshot?.capabilities.models.some((model) => model.kind === 'video')) return;
     const timer = window.setTimeout(() => {
       void window.clips.saveDraft('video', videoDraft).then((result) => {
         if (!result.ok) announce(translate(locale, errorCopy[result.error.code]), 'error');
       }).catch(() => announce(translate(locale, 'settings.saveError'), 'error'));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [videoDraft, announce, locale]);
+  }, [videoDraft, announce, locale, snapshot?.capabilities.models]);
 
   const handleImportSummary = useCallback((summary: { imported: Asset[]; rejected: ImportIssue[] }) => {
     if (summary.imported.length) announce(translate(locale, 'toast.imported', { count: new Intl.NumberFormat(locale).format(summary.imported.length) }));
@@ -202,20 +219,6 @@ export function ClipsApp() {
       setView(action);
     });
   }, [importFiles]);
-
-  const importFlowDownloads = useCallback(async () => {
-    if (!window.clips) return;
-    setPending('flowImport');
-    try {
-      const result = await window.clips.importFlowFiles();
-      if (result.ok) handleImportSummary(result.data);
-      else announce(translate(locale, errorCopy[result.error.code]), 'error');
-    } catch {
-      announce(translate(locale, 'toast.error'), 'error');
-    } finally {
-      setPending('');
-    }
-  }, [announce, handleImportSummary, locale]);
 
   const importDroppedFiles = useCallback(async (files: readonly File[]) => {
     if (!window.clips || files.length === 0) return [] as Asset[];
@@ -273,18 +276,19 @@ export function ClipsApp() {
       announce(translate(locale, 'create.promptRequired'), 'error');
       return;
     }
+    if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') {
+      setView('profile');
+      return;
+    }
     setPending('generation');
     try {
       const result = createMode === 'image'
         ? await window.clips.generate({ prompt: draft.prompt, characterId: draft.characterId, referenceAssetIds: draft.referenceAssetIds, modelId: draft.modelId, aspectRatio: draft.aspectRatio, outputCount: draft.outputCount })
-        : draft.sourceImageId
-          ? await window.clips.generateImageToVideo({ prompt: draft.prompt, sourceImageId: draft.sourceImageId, characterId: draft.characterId, modelId: draft.modelId, aspectRatio: draft.aspectRatio })
-          : null;
-      if (result?.ok) {
+        : await window.clips.generateImageToVideo({ prompt: draft.prompt, referenceAssetIds: draft.referenceAssetIds, characterId: draft.characterId, modelId: draft.modelId, aspectRatio: draft.aspectRatio });
+      if (result.ok) {
         setSelectedAssetId(null);
         announce(translate(locale, 'toast.generationQueued'));
-      } else if (result) announce(translate(locale, errorCopy[result.error.code]), 'error');
-      else announce(translate(locale, 'create.frameRequired'), 'error');
+      } else announce(translate(locale, errorCopy[result.error.code]), 'error');
     } catch {
       announce(translate(locale, 'error.provider'), 'error');
     } finally {
@@ -400,9 +404,10 @@ export function ClipsApp() {
   const useAsVideoSource = useCallback((asset: Asset) => {
     if (asset.kind !== 'image') return;
     setCreateMode('video');
-    updateDraft('video', { sourceImageId: asset.id });
+    const current = drafts?.video ?? snapshot?.settings.drafts.video;
+    updateDraft('video', { referenceAssetIds: [...new Set([...(current?.referenceAssetIds ?? []), asset.id])].slice(0, 12), sourceImageId: null });
     setView('create');
-  }, [updateDraft]);
+  }, [drafts, snapshot, updateDraft]);
 
   const createWithCharacter = useCallback((character: Character) => {
     setCreateMode('image');
@@ -412,14 +417,11 @@ export function ClipsApp() {
 
   const reuseJobSettings = useCallback((job: GenerationJob) => {
     if (!snapshot) return;
-    const sourceImageId = job.kind === 'video'
-      ? job.inputAssetIds.find((id) => snapshot.assets.some((asset) => asset.id === id && asset.kind === 'image')) ?? null
-      : null;
     updateDraft(job.kind, {
       prompt: job.prompt,
       characterId: job.characterId,
-      referenceAssetIds: job.kind === 'image' ? job.inputAssetIds.slice(0, 12) : [],
-      sourceImageId,
+      referenceAssetIds: job.inputAssetIds.slice(0, 12),
+      sourceImageId: null,
       modelId: job.modelId,
       aspectRatio: job.aspectRatio,
       outputCount: job.outputCount,
@@ -444,13 +446,15 @@ export function ClipsApp() {
     }
   }, [announce, locale]);
 
-  const openFlow = useCallback(async () => {
+  const connectFlow = useCallback(async () => {
     if (!window.clips) return;
     setPending('flow');
     try {
-      const result = await window.clips.openFlow();
-      if (result.ok) announce(translate(locale, 'toast.flowOpened'));
-      else announce(translate(locale, errorCopy[result.error.code]), 'error');
+      const result = await window.clips.connectFlow();
+      if (result.ok) {
+        setSnapshot((current) => current ? { ...current, capabilities: result.data } : current);
+        announce(translate(locale, 'account.connectedToast'));
+      } else announce(result.error.message, 'error');
     } catch {
       announce(translate(locale, 'error.provider'), 'error');
     } finally {
@@ -463,59 +467,9 @@ export function ClipsApp() {
     setOnboardingStep(null);
   }, []);
 
-  const addAccountLabel = useCallback(async (label: string) => {
-    if (!window.clips) return;
-    setPending('account');
-    try {
-      const result = await window.clips.addAccount({ provider: 'google-flow', label });
-      if (result.ok) {
-        setSnapshot((current) => current ? {
-          ...current,
-          accounts: [...current.accounts.filter((account) => account.id !== result.data.id), result.data],
-        } : current);
-        announce(translate(locale, 'account.labelSaved'));
-      } else announce(translate(locale, errorCopy[result.error.code]), 'error');
-    } catch {
-      announce(translate(locale, 'toast.error'), 'error');
-    } finally {
-      setPending('');
-    }
-  }, [announce, locale]);
-
-  const switchAccount = useCallback(async (accountId: string) => {
-    if (!window.clips) return;
-    setPending(accountId);
-    try {
-      const result = await window.clips.switchAccount(accountId);
-      if (result.ok) {
-        setSnapshot((current) => current ? { ...current, settings: { ...current.settings, activeAccountId: accountId } } : current);
-        announce(translate(locale, 'toast.saved'));
-      } else announce(translate(locale, errorCopy[result.error.code]), 'error');
-    } catch {
-      announce(translate(locale, 'toast.error'), 'error');
-    } finally {
-      setPending('');
-    }
-  }, [announce, locale]);
-
-  const confirmRemoveAccount = useCallback(async () => {
-    if (!window.clips || !removeAccount) return;
-    setPending(removeAccount.id);
-    try {
-      const result = await window.clips.removeAccount(removeAccount.id);
-      if (result.ok) {
-        setSnapshot((current) => current ? { ...current, accounts: current.accounts.filter((account) => account.id !== removeAccount.id) } : current);
-        announce(translate(locale, 'account.removed'));
-        setRemoveAccount(null);
-      } else announce(translate(locale, errorCopy[result.error.code]), 'error');
-    } catch {
-      announce(translate(locale, 'toast.error'), 'error');
-    } finally {
-      setPending('');
-    }
-  }, [announce, locale, removeAccount]);
 
   useEffect(() => {
+    document.documentElement.classList.toggle('is-windows', /Windows/i.test(navigator.userAgent));
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && onboardingStep !== null) {
         event.preventDefault();
@@ -528,7 +482,7 @@ export function ClipsApp() {
 
   const titleKey: TranslationKey = view === 'settings' ? 'header.settings' : view === 'profile' ? 'header.profile' : `header.${view}` as TranslationKey;
 
-  if (!snapshot) return <div className="boot-screen"><div className="boot-mark">C</div><p>{loadError ? t('app.unavailable') : t('app.loading')}</p>{loadError ? <Button onClick={() => void load()}>{t('app.retry')}</Button> : <span className="loading-rule" aria-hidden="true" />}</div>;
+  if (!snapshot) return <div className="boot-screen"><div className="boot-mark"><Clapperboard size={30} strokeWidth={2.4} aria-hidden="true" /></div><p>{loadError ? t('app.unavailable') : t('app.loading')}</p>{loadError ? <Button onClick={() => void load()}>{t('app.retry')}</Button> : <span className="loading-rule" aria-hidden="true" />}</div>;
 
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
   const currentDraft = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
@@ -538,20 +492,20 @@ export function ClipsApp() {
     : view === 'settings'
       ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={() => setOnboardingStep(0)} onOpenDataFolder={() => void openDataFolder()} busy={Boolean(pending)} t={t} />
       : view === 'profile'
-        ? <AccountsWorkspace snapshot={snapshot} onOpenFlow={() => void openFlow()} onAddLabel={(label) => void addAccountLabel(label)} onSwitch={(id) => void switchAccount(id)} onRemove={(id) => setRemoveAccount(snapshot.accounts.find((account) => account.id === id) ?? null)} busy={Boolean(pending)} t={t} />
+        ? <AccountsWorkspace snapshot={snapshot} onConnectFlow={() => void connectFlow()} busy={pending === 'flow'} t={t} />
         : view === 'characters'
           ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
           : view === 'queue'
             ? <QueueWorkspace snapshot={snapshot} busyJobId={pending.startsWith('job:') ? pending.slice(4) : null} t={t} onCreate={() => setView('create')} onRetry={(job) => void retryGenerationJob(job)} onCancel={(job) => void cancelGenerationJob(job)} onReuse={reuseJobSettings} onSelectAsset={(asset) => setSelectedAssetId(asset.id)} />
-            : <LibraryWorkspace snapshot={snapshot} kind={view === 'images' ? 'image' : view === 'videos' ? 'video' : 'all'} locale={locale} t={t} busy={Boolean(pending)} flowReady={activeAccount?.provider === 'google-flow'} hasFlowProfile={snapshot.accounts.some((account) => account.provider === 'google-flow')} onKind={(kind) => setView(kind === 'all' ? 'library' : kind === 'image' ? 'images' : 'videos')} onImport={() => void importFiles()} onImportFlow={() => void importFlowDownloads()} onOpenProfiles={() => setView('profile')} onPaste={() => void pasteClipboardImage()} onDrop={(files) => void importDroppedFiles(files)} onReveal={(asset) => void revealAsset(asset)} onDelete={(asset) => void removeAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onAssign={(assetIds, characterId) => void assignAssets(assetIds, characterId)} />;
+            : <LibraryWorkspace snapshot={snapshot} kind={libraryKind} locale={locale} t={t} busy={Boolean(pending)} onKind={setLibraryKind} onImport={() => void importFiles()} onPaste={() => void pasteClipboardImage()} onDrop={(files) => void importDroppedFiles(files)} onReveal={(asset) => void revealAsset(asset)} onDelete={(asset) => void removeAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onAssign={(assetIds, characterId) => void assignAssets(assetIds, characterId)} />;
 
   return (
     <div className={`app-shell ${view === 'create' ? 'has-composer' : ''} ${selectedAsset ? 'has-inspector' : ''}`}>
       <a className="skip-link" href="#workspace-content">{t('accessibility.skipToContent')}</a>
       <nav className="navigation-rail" aria-label={t('accessibility.primaryNavigation')}>
-        <button className="brand-mark" type="button" aria-label={t('app.name')} onClick={() => setView('create')}>C</button>
+        <button className="brand-mark" type="button" aria-label={t('app.name')} onClick={() => setView('create')}><Clapperboard size={26} strokeWidth={2.4} aria-hidden="true" /></button>
         <div className="rail-nav">
-          {navDefinition.map(({ view: itemView, key, icon: Icon }) => <button key={itemView} type="button" className={`rail-nav-item ${view === itemView ? 'is-active' : ''}`} aria-label={t(key)} aria-current={view === itemView ? 'page' : undefined} title={t(key)} onClick={() => setView(itemView)}>
+          {navDefinition.map(({ view: itemView, key, icon: Icon }) => <button key={itemView} type="button" className={`rail-nav-item tooltip-trigger ${view === itemView ? 'is-active' : ''}`} aria-label={t(key)} aria-current={view === itemView ? 'page' : undefined} data-tooltip={t(key)} onClick={() => setView(itemView)}>
             <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
           </button>)}
         </div>
@@ -561,8 +515,8 @@ export function ClipsApp() {
       </nav>
 
       {view === 'create' ? <aside className="phase-one-panel creator-side-panel">
-        <div className="phase-panel-brand"><span className="brand-wordmark">{t('app.name')}</span><span className="local-mark">{t('header.sampleMode')}</span></div>
-        <CreatorPanel snapshot={snapshot} mode={createMode} draft={currentDraft} busy={pending === 'generation'} t={t} onMode={setCreateMode} onDraft={(patch) => updateDraft(createMode, patch)} onImport={() => void importReferences()} onPaste={() => void pasteReference()} onDrop={(files) => void dropReferences(files)} onCreate={() => void createGeneration()} onCharacters={() => setView('characters')} />
+        <div className="phase-panel-brand"><span className="brand-wordmark">{t('app.name')}</span><span className="local-mark">{t(snapshot.capabilities.provider === 'mock' ? 'header.sampleMode' : 'account.flowTitle')}</span></div>
+        <CreatorPanel snapshot={snapshot} mode={createMode} draft={currentDraft} busy={pending === 'generation'} t={t} onMode={setCreateMode} onDraft={(patch) => updateDraft(createMode, patch)} onImport={() => void importReferences()} onPaste={() => void pasteReference()} onDrop={(files) => void dropReferences(files)} onCreate={() => void createGeneration()} onCharacters={() => setView('characters')} onConnectFlow={() => snapshot.capabilities.status === 'unavailable' ? setView('profile') : void connectFlow()} />
       </aside> : null}
 
       <section className="main-column">
@@ -587,23 +541,19 @@ export function ClipsApp() {
         <IconButton label={t('common.close')} icon={X} size="small" onClick={() => setNotice(null)} />
       </div> : null}
 
-      {onboardingStep !== null ? <Onboarding step={onboardingStep} locale={locale} onStep={setOnboardingStep} onDone={finishOnboarding} onOpenFlow={() => void openFlow()} onLocale={(value) => void setLocale(value)} t={t} /> : null}
+      {onboardingStep !== null ? <Onboarding step={onboardingStep} locale={locale} onStep={setOnboardingStep} onDone={finishOnboarding} onLocale={(value) => void setLocale(value)} t={t} /> : null}
 
-      {removeAccount ? <Modal title={t('account.removeTitle')} description={t('account.removeBody')} onClose={() => setRemoveAccount(null)} closeLabel={t('common.close')} footer={<><Button onClick={() => setRemoveAccount(null)}>{t('common.cancel')}</Button><Button variant="danger" busy={pending === removeAccount.id} onClick={() => void confirmRemoveAccount()}>{t('account.remove')}</Button></>}>
-        <p className="remove-account-label">{removeAccount.label}</p>
-      </Modal> : null}
       {deleteCharacter ? <Modal title={t('character.deleteTitle')} description={t('character.deleteBody')} onClose={() => setDeleteCharacter(null)} closeLabel={t('common.close')} footer={<><Button onClick={() => setDeleteCharacter(null)}>{t('common.cancel')}</Button><Button variant="danger" busy={pending === deleteCharacter.id} onClick={() => void confirmDeleteCharacter()}>{t('common.delete')}</Button></>}><p className="remove-account-label">{deleteCharacter.name}</p></Modal> : null}
       {importIssues ? <Modal title={t('modal.importIssues')} description={t('modal.importIssuesHint')} onClose={() => setImportIssues(null)} closeLabel={t('common.close')}><ul className="import-issues-list">{importIssues.map((issue, index) => <li key={`${issue.name}-${index}`}><strong>{issue.name}</strong><span>{issue.message}</span></li>)}</ul><div className="import-issues-footer"><Button variant="primary" onClick={() => setImportIssues(null)}>{t('common.done')}</Button></div></Modal> : null}
     </div>
   );
 }
 
-function Onboarding({ step, locale, onStep, onDone, onOpenFlow, onLocale, t }: {
+function Onboarding({ step, locale, onStep, onDone, onLocale, t }: {
   step: number;
   locale: Locale;
   onStep: (step: number) => void;
   onDone: () => void;
-  onOpenFlow: () => void;
   onLocale: (locale: Locale) => void;
   t: Translate;
 }) {
@@ -613,6 +563,7 @@ function Onboarding({ step, locale, onStep, onDone, onOpenFlow, onLocale, t }: {
   const previous = useCallback(() => onStep(Math.max(0, current - 1)), [current, onStep]);
   const next = useCallback(() => current >= 3 ? onDone() : onStep(current + 1), [current, onDone, onStep]);
   useEffect(() => {
+    document.documentElement.classList.toggle('is-windows', /Windows/i.test(navigator.userAgent));
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLSelectElement || event.target instanceof HTMLInputElement) return;
       if (event.key === 'ArrowRight') { event.preventDefault(); next(); }
@@ -622,21 +573,20 @@ function Onboarding({ step, locale, onStep, onDone, onOpenFlow, onLocale, t }: {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [current, next, previous]);
   return (
-    <Modal title={t(titles[current])} description={t(bodies[current])} onClose={onDone} closeLabel={t('common.close')} wide labelledBy="onboarding-title" footer={
+    <Modal title={t(titles[current])} description={t(bodies[current])} onClose={onDone} closeLabel={t('common.close')} wide labelledBy="onboarding-title" className="onboarding-modal" transitionKey={current} footer={
       <div className="onboarding-footer">
-        <label className="onboarding-language"><span>{t('onboarding.language')}</span><select value={locale} aria-label={t('onboarding.language')} onChange={(event) => onLocale(event.currentTarget.value as Locale)}><option value="en">{t('settings.english')}</option><option value="de">{t('settings.german')}</option></select></label>
+        <div className="onboarding-language"><span>{t('onboarding.language')}</span><MenuSelect label={t('onboarding.language')} value={locale} options={[{ value: 'en', label: t('settings.english') }, { value: 'de', label: t('settings.german') }]} onChange={(value) => onLocale(value as Locale)} /></div>
         <div className="onboarding-steps" aria-label={`${current + 1} / 4`}>{[0, 1, 2, 3].map((index) => <button key={index} type="button" className={index === current ? 'is-current' : index < current ? 'is-complete' : ''} aria-label={t('onboarding.goToStep', { count: index + 1 })} onClick={() => onStep(index)} />)}</div>
         <div className="onboarding-actions">
           {current > 0 ? <Button size="small" onClick={previous}>{t('common.back')}</Button> : <button type="button" className="onboarding-skip" onClick={onDone}>{t('common.skip')}</button>}
-          {current === 1 ? <Button size="small" icon={ArrowUpRight} onClick={onOpenFlow}>{t('onboarding.openFlow')}</Button> : null}
           <Button variant="primary" size="small" onClick={next}>{current === 3 ? t('onboarding.start') : t('common.continue')}</Button>
         </div>
       </div>
     }>
-      <div className={`onboarding-visual onboarding-visual-${current}`}>
+      <div key={current} className={`onboarding-visual onboarding-visual-${current}`}>
         {current === 0 ? <div className="onboarding-flow-map"><StepMark icon={Users} label={t('onboarding.characters')} /><span /><StepMark icon={Images} label={t('onboarding.images')} /><span /><StepMark icon={Clapperboard} label={t('onboarding.video')} /></div>
-          : current === 1 ? <div className="onboarding-browser-visual"><span className="browser-topline"><i /><i /><i /></span><div className="browser-site-mark">Flow</div><div className="browser-site-line" /><div className="browser-site-line short" /><ArrowUpRight size={19} aria-hidden="true" /></div>
-            : current === 2 ? <div className="onboarding-local-visual"><div className="local-visual-folder"><FolderClosed size={26} strokeWidth={1.4} /></div><div className="local-visual-lines"><span /><span /><span /></div><span className="local-visual-rule" /></div>
+          : current === 1 ? <div className="onboarding-account-visual"><span className="onboarding-google-mark"><UserRound size={22} aria-hidden="true" /></span><div><strong>Google Flow</strong><span>{t('account.connect')}</span></div><span className="onboarding-account-rule" /></div>
+            : current === 2 ? <div className="onboarding-library-visual"><div className="onboarding-reference-tile"><span /><span /><span /></div><div className="onboarding-reference-tile landscape"><span /><span /></div><div className="onboarding-reference-tile portrait"><span /><span /><span /></div></div>
               : <div className="onboarding-ready-visual"><span className="ready-mark"><Sparkles size={24} strokeWidth={1.4} /></span><span className="ready-rail" /><span className="ready-rail short" /></div>}
       </div>
     </Modal>

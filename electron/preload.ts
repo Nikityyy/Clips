@@ -8,7 +8,6 @@ const IPC_CHANNELS = {
   getStorageSummary: 'clips:get-storage-summary',
   openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
-  importFlowFiles: 'clips:import-flow-files',
   importPaths: 'clips:import-paths',
   pasteClipboardImage: 'clips:paste-clipboard-image',
   saveDraft: 'clips:save-draft',
@@ -24,21 +23,16 @@ const IPC_CHANNELS = {
   generateVideo: 'clips:generate-video',
   retryJob: 'clips:retry-job',
   cancelJob: 'clips:cancel-job',
-  addAccount: 'clips:add-account',
-  switchAccount: 'clips:switch-account',
-  removeAccount: 'clips:remove-account',
-  openFlow: 'clips:open-flow',
+  connectFlow: 'clips:connect-flow',
   revealAsset: 'clips:reveal-asset',
 } as const;
 import type {
-  AddAccountInput,
   AppSnapshot,
   Asset,
   ClipsApi,
   CreateCharacterInput,
   DeleteSummary,
   EntityId,
-  FlowImportInput,
   GenerationDraft,
   GenerationJob,
   GenerationRequest,
@@ -48,8 +42,8 @@ import type {
   Locale,
   NativeMenuAction,
   Result,
-  ProviderAccount,
   Character,
+  ProviderCapabilities,
   UndoDeleteSummary,
   Settings,
   SettingsPatch,
@@ -76,7 +70,6 @@ const api: ClipsApi = {
   },
 
   importFiles: () => invoke<ImportSummary>(IPC_CHANNELS.importFiles),
-  importFlowFiles: (input: FlowImportInput = {}) => invoke<ImportSummary>(IPC_CHANNELS.importFlowFiles, input),
   importDroppedFiles(files) {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     return invoke<ImportSummary>(IPC_CHANNELS.importPaths, { paths });
@@ -101,11 +94,7 @@ const api: ClipsApi = {
   retryJob: (jobId: EntityId) => invoke<GenerationJob>(IPC_CHANNELS.retryJob, { id: jobId }),
   cancelJob: (jobId: EntityId) => invoke<GenerationJob>(IPC_CHANNELS.cancelJob, { id: jobId }),
 
-  addAccount: (input: AddAccountInput) => invoke<ProviderAccount>(IPC_CHANNELS.addAccount, input),
-  switchAccount: (accountId: EntityId) => invoke<ProviderAccount>(IPC_CHANNELS.switchAccount, { accountId }),
-  removeAccount: (accountId: EntityId) => invoke<void>(IPC_CHANNELS.removeAccount, { accountId }),
-
-  openFlow: () => invoke<void>(IPC_CHANNELS.openFlow),
+  connectFlow: () => invoke<ProviderCapabilities>(IPC_CHANNELS.connectFlow),
   revealAsset: (assetId: EntityId) => invoke<void>(IPC_CHANNELS.revealAsset, { id: assetId }),
 };
 

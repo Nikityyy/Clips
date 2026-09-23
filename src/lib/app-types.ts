@@ -1,7 +1,7 @@
 import type { Asset, JobKind } from '@/shared/contracts';
 import type { TranslationKey } from '@/lib/i18n';
 
-export type View = 'create' | 'images' | 'videos' | 'library' | 'characters' | 'queue' | 'settings' | 'profile';
+export type View = 'create' | 'library' | 'characters' | 'queue' | 'settings' | 'profile';
 export type CreateMode = JobKind;
 export type Notice = {
   id: number;

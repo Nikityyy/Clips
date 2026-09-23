@@ -1,41 +1,50 @@
 # Clips
 
-Clips is a local-first desktop studio for building characters and creating, reusing, and organizing images and videos. Google Flow handles live generation; your prompts, references, and library belong to Clips and remain on your computer.
+Clips is a local-first desktop studio for creating images and videos, reusing reference images, organizing a media library, and keeping prompts with their results. Installed releases start with an empty library and do not include development sample media.
 
-## Development
+## Run in development
 
-Install the dependencies, then start the desktop app:
+Install the dependencies and start the desktop app:
 
 ```sh
 npm install
 npm run dev
 ```
 
-The project uses Electron, Next.js, TypeScript, and Tailwind CSS.
+Development starts with a local test provider and a ready-to-explore sample library with fictional image and video references plus the Mara character. Local mock generations use repository fixtures and do not use a Google account or Flow credits. To test the live provider in development, set `CLIPS_PROVIDER=google-flow` before `npm run dev`; live-provider profiles stay empty until you import media.
 
-Clips uses native operating-system menus, standard text-edit context menus, and full-screen controls. Its window size and position are remembered between launches and adjusted to stay within the available display area. Import media with **Ctrl/Command+O** and open Settings with **Ctrl/Command+,**.
+## Connect Google Flow
 
-## Google Flow
+Clips uses the open-source [gflow-cli](https://github.com/ffroliva/gflow-cli) connector. Install it and its Chromium browser once:
 
-Use the built-in mock provider for development and tests. It creates local sample jobs and does not use Google Flow credits. Live generation is a deliberate, manual action in Google Flow: sign in there, start generation there, then bring the result into Clips. Clips does not call private Flow endpoints, scrape browser cookies, or silently substitute the Gemini API. A live generation started in Flow may use Google's credits.
+```sh
+uv tool install gflow-cli
+uv tool run --from gflow-cli playwright install chromium
+```
+
+Then open **Google account** in Clips and choose **Continue in Google Chrome**. gflow-cli opens Chrome for Google’s sign-in and keeps its own local Flow profile. Clips never reads or stores your Google password, cookies, or session token. Generations are started from Clips and their output files are imported into the Clips library.
+
+The connector is unofficial, alpha, and reverse-engineered; it is not affiliated with Google, and Flow changes may break it. Its `gflow models --json` catalog supplies the model aliases, accepted aspect ratios, and reference-image limits shown in Clips. Video generation may use Flow credits from your account. Review the connector’s [disclaimer](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) and Google’s terms before connecting.
+
+If Clips cannot find the CLI, check that `gflow` (or `gflow.exe` on Windows) is on the application’s `PATH`. Set `GFLOW_CLI_PATH` to the executable’s full path when it is installed elsewhere.
 
 ## Local data
 
-Clips stores its database and media in the operating system's per-user application-data directory, separately from the repository and independent of the connected Google account. Use the app's storage controls to locate that directory.
+Clips stores its database and media in the operating system’s per-user application-data directory, separately from the repository. Use **Settings → Open data folder** to locate it. Imported and generated media are copied into this library.
 
-## Tests and packaging
+## Checks and packaging
 
 ```sh
 npm test
 npm run lint
+npm run typecheck
 npm run test:e2e
 npm run package:win
 npm run test:package
-npm run typecheck
-npm run package
+npm run generate:icons
 ```
 
-`npm run test:e2e` builds the Electron bridge, starts the local renderer, and checks the desktop workflow in an isolated temporary profile. After packaging for the current platform, `npm run test:package` launches the packaged app against a temporary profile and verifies its database, bundled media, and local media protocol. Tests use the mock provider and do not spend Google Flow credits. Packaging is configured for Windows, macOS, and Linux; platform signing and distribution requirements vary by release environment.
+The app uses Lucide icons through `lucide-react`; its Clapperboard mark is used for the app icon. Run `npm run generate:icons` to rebuild the platform icon assets from the pack icon. The Manrope variable font is bundled under the SIL Open Font License 1.1; its notice is included with the application. The automated tests use the local test provider and do not sign in or spend Flow credits. `npm run test:package` expects a platform package to have been built first.
 
 ## Contributing
 

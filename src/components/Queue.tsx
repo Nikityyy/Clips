@@ -93,7 +93,7 @@ function QueueJob({ job, snapshot, busy, t, onRetry, onCancel, onReuse, onSelect
       </dl>
       {outputs.length ? <div className="queue-output-list" aria-label={t('queue.savedOutputs')}>{outputs.map((asset) => <button key={asset.id} type="button" className="queue-output-item" onClick={() => onSelectAsset(asset)}><span className="queue-output-preview">{asset.kind === 'image' ? <img src={asset.uri} alt="" loading="lazy" decoding="async" /> : <span className="queue-output-video"><Film size={18} aria-hidden="true" /><small>{durationLabel(snapshot.settings.locale, asset.durationMs)}</small></span>}</span><span><strong>{asset.title}</strong><small>{asset.kind === 'image' ? t('common.images') : t('common.videos')}</small></span><Check size={14} aria-hidden="true" /></button>)}</div> : null}
       <footer className="queue-job-actions">
-        {isActive ? <Button size="small" variant="quiet" icon={StopCircle} busy={busy} onClick={onCancel}>{t(busy ? 'queue.cancelling' : 'queue.cancel')}</Button> : null}
+        {isActive && job.provider === 'mock' ? <Button size="small" variant="quiet" icon={StopCircle} busy={busy} onClick={onCancel}>{t(busy ? 'queue.cancelling' : 'queue.cancel')}</Button> : isActive ? <span className="queue-flow-note">{t('queue.flowCannotCancel')}</span> : null}
         {job.status === 'failed' || job.status === 'cancelled' ? <Button size="small" variant="secondary" icon={RotateCw} busy={busy} onClick={onRetry}>{t(busy ? 'queue.retrying' : 'queue.retry')}</Button> : null}
         {job.status === 'completed' ? <Button size="small" variant="quiet" icon={RotateCw} onClick={onReuse}>{t('queue.reuseSettings')}</Button> : null}
         {outputs.length ? <span className="queue-output-confirmation">{t('queue.outputSaved')}</span> : null}

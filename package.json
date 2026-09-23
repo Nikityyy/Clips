@@ -1,7 +1,7 @@
 {
   "name": "clips",
   "version": "1.0.0",
-  "description": "A local-first studio for characters, images, and video.",
+  "description": "A local-first desktop studio for creating and organizing images and video with Google Flow.",
   "author": "Nikita Berger",
   "license": "Apache-2.0",
   "repository": {
@@ -30,11 +30,12 @@
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac",
     "package:linux": "npm run build && electron-builder --linux",
-    "test:e2e": "npm run build:electron && concurrently --kill-others --success first \"npm:dev:web\" \"wait-on tcp:127.0.0.1:3000 && node tests/e2e-smoke.mjs\"",
-    "test:package": "node tests/package-smoke.mjs"
+    "test:e2e": "npm run build:electron && concurrently --kill-others --success first \"npm:dev:web\" \"wait-on tcp:127.0.0.1:3000 && node tests/e2e-smoke.mjs && node tests/e2e-dev-seed.mjs\"",
+    "test:package": "node tests/package-smoke.mjs",
+    "generate:icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
-    "@fontsource/mukta-mahee": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
     "@tailwindcss/postcss": "^4.3.3",
     "lucide-react": "^1.47.0",
     "next": "^16.3.6",
@@ -54,6 +55,7 @@
     "electron-builder": "^26.15.3",
     "oxlint": "^1.85.0",
     "playwright": "1.63.0",
+    "sharp": "^0.35.4",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
     "wait-on": "^9.1.0"
@@ -70,19 +72,24 @@
     ],
     "extraResources": [
       {
-        "from": "public/media/mock",
-        "to": "media/mock",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "LICENSE",
         "to": "licenses/LICENSE"
       },
       {
         "from": "THIRD_PARTY_NOTICES.md",
         "to": "licenses/THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "public/licenses/OFL-1.1-Manrope.txt",
+        "to": "licenses/OFL-1.1-Manrope.txt"
+      },
+      {
+        "from": "public/licenses/ISC-LUCIDE.txt",
+        "to": "licenses/ISC-LUCIDE.txt"
+      },
+      {
+        "from": "assets/clips.png",
+        "to": "app-icon.png"
       }
     ],
     "directories": {

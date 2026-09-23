@@ -21,10 +21,10 @@ describe('renderer-to-main contracts', () => {
     }).success).toBe(true);
   });
 
-  it('rejects empty prompts, unsupported ratios, extra fields, and excessive output counts', () => {
+  it('rejects empty prompts, malformed ratios, extra fields, and excessive output counts', () => {
     for (const request of [
       { prompt: '   ' },
-      { prompt: 'portrait', aspectRatio: '7:5' },
+      { prompt: 'portrait', aspectRatio: 'ratio' },
       { prompt: 'portrait', outputCount: 7 },
       { prompt: 'portrait', filePath: 'C:/private/secret.png' },
     ]) {

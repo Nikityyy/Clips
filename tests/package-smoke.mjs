@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,26 +25,19 @@ try {
   const runtime = await app.evaluate(({ app: electronApp }) => ({ packaged: electronApp.isPackaged, userData: electronApp.getPath('userData') }));
   assert.equal(runtime.packaged, true);
   assert.equal(path.resolve(runtime.userData).toLowerCase(), path.resolve(isolation).toLowerCase());
+  assert.equal(existsSync(path.join(root, 'out', 'media', 'mock')), false, 'the packaged renderer should not contain development sample media');
+  assert.equal(existsSync(path.join(root, 'fixtures', 'dev-media')), true, 'development fixtures should remain available to the source workspace');
+  await page.evaluate(() => document.fonts.ready);
+  assert.equal(await page.evaluate(() => document.fonts.check('500 14px "Manrope Variable"')), true, 'the packaged app should load the bundled Manrope font');
+  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the packaged app should show Lucide’s Clapperboard icon');
   const snapshot = await page.evaluate(async () => window.clips.getSnapshot());
   assert.ok(snapshot.ok, 'packaged app should open its local database');
-  assert.ok(snapshot.data.assets.length >= 6, 'packaged app should load bundled local fixtures');
-  assert.ok(snapshot.data.characters.some((character) => character.name === 'Mara'));
-  try {
-    await page.waitForFunction(() => {
-      const previews = [...document.querySelectorAll('.result-card img')];
-      return previews.length >= 6 && previews.every((image) => image.complete && image.naturalWidth > 0);
-    }, { timeout: 10_000 });
-  } catch {
-    const previewState = await page.evaluate(() => ({
-      url: location.href,
-      count: document.querySelectorAll('.result-card img').length,
-      images: [...document.querySelectorAll('.result-card img')].map((image) => ({ src: image.src, complete: image.complete, width: image.naturalWidth })),
-      body: document.body.innerText.slice(0, 700),
-    }));
-    throw new Error(`Packaged media preview failed: ${JSON.stringify({ previewState, rendererErrors })}`);
-  }
+  assert.equal(snapshot.data.assets.length, 0, 'a new packaged app should start with an empty media library');
+  assert.equal(snapshot.data.characters.length, 0, 'a new packaged app should not preload example characters');
+  assert.ok(snapshot.data.capabilities.models.length === 0 || snapshot.data.capabilities.provider === 'google-flow', 'the installed app should use Google Flow, never bundled mock models');
+  await page.locator('.canvas-title-block h1').waitFor({ state: 'visible' });
   assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
-  console.log('Packaged app smoke test passed: isolated profile, SQLite startup, bundled assets, and local media protocol.');
+  console.log('Packaged app smoke test passed: isolated profile, empty first-run library, Flow-only provider, and renderer startup.');
 } finally {
   if (app) await app.close().catch(() => undefined);
   await rm(isolation, { recursive: true, force: true });
