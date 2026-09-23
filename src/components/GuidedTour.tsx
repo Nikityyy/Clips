@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { Translate } from '@/lib/app-types';
 import type { TranslationKey } from '@/lib/i18n';
 
-const steps: { target: string; title: TranslationKey; body: TranslationKey; requiresClick?: boolean }[] = [
+const steps: { target: string; title: TranslationKey; body: TranslationKey }[] = [
   { target: 'prompt', title: 'tour.promptTitle', body: 'tour.promptBody' },
   { target: 'references', title: 'tour.referencesTitle', body: 'tour.referencesBody' },
   { target: 'options', title: 'tour.optionsTitle', body: 'tour.optionsBody' },
-  { target: 'characters', title: 'tour.charactersTitle', body: 'tour.charactersBody', requiresClick: true },
-  { target: 'library', title: 'tour.libraryTitle', body: 'tour.libraryBody', requiresClick: true },
+  { target: 'characters', title: 'tour.charactersTitle', body: 'tour.charactersBody' },
+  { target: 'library', title: 'tour.libraryTitle', body: 'tour.libraryBody' },
 ];
 
 type Bounds = { top: number; left: number; right: number; bottom: number; width: number; height: number };
@@ -21,8 +21,6 @@ export function GuidedTour({ step, onStep, onDone, t }: { step: number; onStep: 
   const cardRef = useRef<HTMLDivElement>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [cardPosition, setCardPosition] = useState({ top: 24, left: 24 });
-  const [interactedStep, setInteractedStep] = useState<number | null>(null);
-  const hasInteracted = interactedStep === current;
 
   useEffect(() => {
     const findTarget = () => {
@@ -71,9 +69,6 @@ export function GuidedTour({ step, onStep, onDone, t }: { step: number; onStep: 
   }, [definition.target]);
 
   useEffect(() => {
-    const onTargetClick = (event: MouseEvent) => {
-      if (targetRef.current?.contains(event.target as Node)) setInteractedStep(current);
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -90,13 +85,11 @@ export function GuidedTour({ step, onStep, onDone, t }: { step: number; onStep: 
       event.preventDefault();
       controls[next]?.focus();
     };
-    document.addEventListener('click', onTargetClick, true);
     document.addEventListener('keydown', onKeyDown, true);
     return () => {
-      document.removeEventListener('click', onTargetClick, true);
       document.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [current, onDone]);
+  }, [onDone]);
 
   const next = () => current === steps.length - 1 ? onDone() : onStep(current + 1);
   const previous = () => onStep(Math.max(0, current - 1));
@@ -114,10 +107,9 @@ export function GuidedTour({ step, onStep, onDone, t }: { step: number; onStep: 
       <div className="guided-tour-progress"><span>{t('tour.progress', { current: current + 1, total: steps.length })}</span><button type="button" onClick={onDone}>{t('tour.skip')}</button></div>
       <h2 id="guided-tour-title">{t(definition.title)}</h2>
       <p id="guided-tour-body">{t(definition.body)}</p>
-      {definition.requiresClick && !hasInteracted ? <p className="guided-tour-prompt">{t('tour.clickToContinue')}</p> : null}
       <div className="guided-tour-actions">
         {current > 0 ? <button type="button" className="guided-tour-back" onClick={previous}>{t('tour.back')}</button> : <span />}
-        <button type="button" className="guided-tour-next" disabled={Boolean(definition.requiresClick && !hasInteracted)} onClick={next}>{t(current === steps.length - 1 ? 'tour.finish' : 'tour.next')}</button>
+        <button type="button" className="guided-tour-next" onClick={next}>{t(current === steps.length - 1 ? 'tour.finish' : 'tour.next')}</button>
       </div>
     </section>
   </div>;

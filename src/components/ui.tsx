@@ -226,11 +226,12 @@ export function MenuSelect({ value, options, label, onChange, className = '', di
       if (!bounds) return;
       const width = Math.min(Math.max(bounds.width, 210), window.innerWidth - 16);
       const left = Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8));
-      const below = window.innerHeight - bounds.bottom - 16;
-      const above = bounds.top - 16;
-      const opensAbove = below < Math.min(260, options.length * 58) && above > below;
-      const maxHeight = Math.max(120, Math.min(360, opensAbove ? above : below));
-      const top = opensAbove ? Math.max(8, bounds.top - maxHeight - 6) : Math.min(window.innerHeight - maxHeight - 8, bounds.bottom + 6);
+      const below = window.innerHeight - bounds.bottom - 8;
+      const above = bounds.top - 8;
+      // Keep the menu alongside its trigger whenever there is usable room below.
+      const opensAbove = below < 140 && above > below;
+      const maxHeight = Math.max(80, Math.min(360, opensAbove ? above : below));
+      const top = opensAbove ? Math.max(8, bounds.top - maxHeight - 6) : bounds.bottom + 6;
       setPosition({ top, left, width, maxHeight });
     };
     const onPointerDown = (event: PointerEvent) => {
@@ -251,7 +252,7 @@ export function MenuSelect({ value, options, label, onChange, className = '', di
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [open, options.length]);
+  }, [open]);
 
   const moveFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!options.length) return;

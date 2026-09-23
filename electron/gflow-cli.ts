@@ -123,6 +123,14 @@ export function parseFlowCatalog(json: string): FlowCatalog {
   return { models, imageAspectRatios, videoAspectRatios };
 }
 
+export function parseFlowVerifiedAccount(output: string): string | null {
+  // gflow-cli may add Rich terminal colors around its status text.
+  // oxlint-disable-next-line no-control-regex -- Strip terminal color sequences before parsing the stable status line.
+  const clean = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  const verified = clean.match(/Flow session verified(?: as ([^\r\n]+))?/i);
+  return verified ? verified[1]?.trim() || '' : null;
+}
+
 export function parseFlowProfiles(json: string): FlowProfile[] {
   const parsed: unknown = JSON.parse(json);
   if (!Array.isArray(parsed)) throw new Error('The gflow-cli account list was not valid JSON.');
@@ -229,12 +237,9 @@ export class GFlowCli {
 
   async verifySession(profileName = DEFAULT_PROFILE): Promise<string> {
     const output = await this.run(['auth', 'status', '--profile', profileName], 90_000);
-    // gflow-cli uses Rich, which may wrap status text in ANSI styles when piped.
-    // oxlint-disable-next-line no-control-regex -- Strip terminal color sequences before parsing the stable status line.
-    const clean = output.stdout.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
-    const verified = clean.match(/Flow session verified(?: as ([^\r\n.]+))?/i);
-    if (!verified) throw new Error('The Google session has not been verified by Flow yet.');
-    return verified[1]?.trim() || '';
+    const account = parseFlowVerifiedAccount(output.stdout);
+    if (account === null) throw new Error('The Google session has not been verified by Flow yet.');
+    return account;
   }
 
   async generate(args: string[], timeoutMs = 30 * 60_000): Promise<string> {

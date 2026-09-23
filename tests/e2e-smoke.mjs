@@ -138,11 +138,9 @@ try {
   }
   await tutorial.getByRole('button', { name: 'Next' }).click();
   await tutorial.getByRole('heading', { name: 'Explore your characters' }).waitFor();
-  assert.equal(await tutorial.getByRole('button', { name: 'Next' }).isDisabled(), true, 'the guided navigation exercise should ask users to try the highlighted tab');
-  await page.locator('[data-tour="characters"]').click();
+  assert.equal(await tutorial.getByRole('button', { name: 'Next' }).isDisabled(), false, 'the guide should never require an action in the app');
   await tutorial.getByRole('button', { name: 'Next' }).click();
   await tutorial.getByRole('heading', { name: 'Find your media again' }).waitFor();
-  await page.locator('[data-tour="library"]').click();
   await tutorial.getByRole('button', { name: 'Open the studio' }).click();
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
   await page.evaluate(() => document.documentElement.classList.add('is-windows'));
@@ -195,7 +193,19 @@ try {
   await page.getByRole('textbox', { name: 'Describe what you want to see' }).fill('A quiet figure at the edge of a sunlit room, fine grain.');
   const modelPicker = page.locator('.generation-options .menu-select').first();
   await modelPicker.getByRole('button').click();
-  await page.getByRole('listbox', { name: 'Model' }).getByRole('option', { name: 'Portrait study' }).click();
+  const modelMenu = page.getByRole('listbox', { name: 'Model' });
+  await page.waitForTimeout(160);
+  const modelTrigger = await modelPicker.getByRole('button').elementHandle();
+  const modelMenuGeometry = await page.evaluate((triggerElement) => {
+    const trigger = triggerElement.getBoundingClientRect();
+    const menu = document.querySelector('.menu-select-options').getBoundingClientRect();
+    const expectedWidth = Math.min(Math.max(trigger.width, 210), innerWidth - 16);
+    const expectedLeft = Math.max(8, Math.min(trigger.left, innerWidth - expectedWidth - 8));
+    return { triggerBottom: trigger.bottom, menuTop: menu.top, leftOffset: Math.abs(expectedLeft - menu.left), roomBelow: innerHeight - trigger.bottom - 8 };
+  }, modelTrigger);
+  assert.ok(modelMenuGeometry.leftOffset <= 2, `model options should align with the image-model picker: ${JSON.stringify(modelMenuGeometry)}`);
+  if (modelMenuGeometry.roomBelow >= 140) assert.ok(modelMenuGeometry.menuTop >= modelMenuGeometry.triggerBottom && modelMenuGeometry.menuTop - modelMenuGeometry.triggerBottom <= 9, 'the model menu should open directly below its picker when space allows');
+  await modelMenu.getByRole('option', { name: 'Portrait study' }).click();
   await page.getByRole('button', { name: 'Create 4 images' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.result-grid .result-card').length === 4, { timeout: 15_000 });
   await waitForJob(page, 'A quiet figure at the edge of a sunlit room, fine grain.', (job) => job.status === 'completed');

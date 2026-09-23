@@ -851,7 +851,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .flow-account-mark { display: grid; width: 50px; height: 50px; place-items: center; border: 1px solid #56554f; border-radius: 50%; color: var(--bone-muted); }
 .flow-account-copy { min-width: 0; }
 .account-overline { color: var(--muted); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
-.flow-account-copy h2 { margin: 4px 0 5px; font-size: 18px; font-weight: 500; }
+.flow-account-copy h2 { margin: 4px 0 5px; overflow-wrap: anywhere; font-size: 18px; font-weight: 500; }
 .flow-account-copy p { max-width: 70ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .account-status-mark { width: 9px; height: 9px; border-radius: 50%; background: #77766f; }
 .account-status-mark.status-ready { background: #c8c6bd; box-shadow: 0 0 0 5px rgb(200 198 189 / .09); }
@@ -865,14 +865,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .flow-account-row-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #474640; border-radius: 50%; color: var(--muted); }
 .flow-account-row-mark.is-connected { border-color: #77766f; color: var(--bone); }
 .flow-account-row-copy { display: grid; min-width: 0; gap: 4px; }
-.flow-account-row-copy strong { overflow: hidden; color: var(--bone); font-size: 13px; font-weight: 520; text-overflow: ellipsis; }
+.flow-account-row-copy strong { min-width: 0; color: var(--bone); font-size: 13px; font-weight: 520; overflow-wrap: anywhere; }
 .flow-account-row-copy span { color: var(--muted); font-size: 11px; }
 .flow-account-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .startup-account-options { display: grid; gap: 7px; }
 .startup-account-option { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--line-soft); background: #171716; color: var(--bone); text-align: start; cursor: pointer; }
 .startup-account-option.is-active { border-color: #77766f; background: #1d1d1b; }
 .startup-account-option:disabled { cursor: default; }
-.startup-account-option span { overflow: hidden; font-size: 12px; text-overflow: ellipsis; }
+.startup-account-option span { min-width: 0; flex: 1; font-size: 12px; overflow-wrap: anywhere; }
 .startup-account-option small { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .gflow-install-panel { max-width: 900px; margin-top: 20px; padding: 20px 22px; border: 1px solid var(--line-soft); background: #171716; }
 .gflow-install-panel h3 { margin: 0 0 6px; font-size: 15px; font-weight: 500; }
@@ -994,7 +994,8 @@ dialog.modal-scrim:has(.onboarding-modal, .startup-gate)::backdrop { background:
 .startup-footer .button { min-width: 190px; justify-content: center; }
 .startup-login-card { display: flex; align-items: center; gap: 16px; padding: 20px; border: 1px solid var(--line-soft); background: #171716; }
 .startup-login-icon { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border: 1px solid #595850; border-radius: 50%; color: var(--bone); }
-.startup-login-card strong { font-size: 14px; font-weight: 550; }
+.startup-login-card > div { min-width: 0; }
+.startup-login-card strong { font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
 .startup-login-card p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .startup-switch-account { margin-top: 8px; }
 .startup-error { margin: 0; color: #f0a59a; font-size: 12px; line-height: 1.5; }

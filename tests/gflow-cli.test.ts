@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GOOGLE_LOGIN_ENTRY_URL, parseFlowCatalog, parseFlowProfiles, parseGenerationPaths, patchGoogleLoginSources, UV_BUILDS } from '../electron/gflow-cli';
+import { GOOGLE_LOGIN_ENTRY_URL, parseFlowCatalog, parseFlowProfiles, parseFlowVerifiedAccount, parseGenerationPaths, patchGoogleLoginSources, UV_BUILDS } from '../electron/gflow-cli';
 
 const catalog = JSON.stringify({
   image: {
@@ -91,6 +91,12 @@ describe('gflow-cli adapter data', () => {
   it('fails clearly when the connector has no complete image/video model catalog', () => {
     expect(() => parseFlowCatalog(JSON.stringify({ image: { models: [], aspects: [] } }))).toThrow(/image and video models/i);
     expect(() => parseFlowCatalog(JSON.stringify({ image: { models: [{ name: 'I', aliases: ['i'], ref_cap: 0 }], aspects: [] }, video: { models: [{ name: 'V', aliases: ['v'], ref_cap: 0 }], aspects: [] } }))).toThrow(/aspect-ratio options/i);
+  });
+
+  it('preserves the complete verified Google email address', () => {
+    expect(parseFlowVerifiedAccount('\u001b[32mFlow session verified as person@gmail.com\u001b[0m\n')).toBe('person@gmail.com');
+    expect(parseFlowVerifiedAccount('Flow session verified')).toBe('');
+    expect(parseFlowVerifiedAccount('Authentication credential missing')).toBeNull();
   });
 
   it('reads only the selected gflow profile metadata', () => {
