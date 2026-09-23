@@ -4,7 +4,7 @@ import { promises as fs, createReadStream, existsSync, openSync, readSync, close
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { GFlowCli, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
+import { GFlowCli, isFlowSignInCancelled, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { DatabaseStore } from './database';
@@ -1515,7 +1515,7 @@ async function connectFlowProfile(profileName: string, options: { transient?: bo
   requireFlowNotice();
   await ensureFreshFlowSignIn();
   if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google Flow sign-in is unavailable in the local test provider.');
-  capabilities = { ...capabilities, profileName, status: 'checking', detail: 'Complete Google sign-in in the Google window.' };
+  capabilities = { ...capabilities, profileName, status: 'checking', detail: '' };
   publishSnapshot();
   try {
     await flowCli.login(profileName);
@@ -1531,8 +1531,9 @@ async function connectFlowProfile(profileName: string, options: { transient?: bo
     return capabilities;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Flow sign-in could not be completed.';
+    const cancelled = isFlowSignInCancelled(message);
     const unavailable = message.includes('gflow-cli is not installed') || message.includes('Could not start gflow-cli');
-    capabilities = { ...capabilities, profileName, status: unavailable ? 'unavailable' : 'needs-login', detail: message };
+    capabilities = { ...capabilities, profileName, status: unavailable ? 'unavailable' : 'needs-login', detail: cancelled ? '' : message };
     if (!options.transient) {
       const id = flowAccountId(profileName);
       const prior = mustStore().one('SELECT label FROM accounts WHERE id = ?', [id]);
@@ -1540,7 +1541,7 @@ async function connectFlowProfile(profileName: string, options: { transient?: bo
       await mustStore().flush();
     }
     publishSnapshot();
-    throw new ClipsError('PROVIDER_UNAVAILABLE', message);
+    throw new ClipsError(cancelled ? 'SIGN_IN_CANCELLED' : 'PROVIDER_UNAVAILABLE', cancelled ? 'Google sign-in was cancelled.' : message);
   }
 }
 

@@ -123,6 +123,11 @@ export function parseFlowCatalog(json: string): FlowCatalog {
   return { models, imageAspectRatios, videoAspectRatios };
 }
 
+export function isFlowSignInCancelled(message: string): boolean {
+  return /Authentication credential missing:\s*No sign-in detected/i.test(message)
+    || /(?:sign[ -]?in|login).{0,40}(?:cancelled|canceled|closed)|(?:cancelled|canceled|closed).{0,40}(?:sign[ -]?in|login)/i.test(message);
+}
+
 export function parseFlowVerifiedAccount(output: string): string | null {
   // gflow-cli may add Rich terminal colors around its status text.
   // oxlint-disable-next-line no-control-regex -- Strip terminal color sequences before parsing the stable status line.

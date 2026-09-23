@@ -23,6 +23,7 @@ const errorCopy: Record<ErrorCode, TranslationKey> = {
   TOO_MANY_FILES: 'error.tooMany',
   STORAGE_ERROR: 'error.storage',
   PROVIDER_UNAVAILABLE: 'error.provider',
+  SIGN_IN_CANCELLED: 'startup.loginCancelled',
   JOB_NOT_RETRYABLE: 'error.notRetryable',
   JOB_NOT_CANCELLABLE: 'error.notCancellable',
   PERMISSION_DENIED: 'error.permission',
@@ -45,6 +46,7 @@ export function ClipsApp() {
   const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
   const [flowNoticeChecked, setFlowNoticeChecked] = useState(false);
   const [gateError, setGateError] = useState('');
+  const [loginCancelled, setLoginCancelled] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState('');
   const [deleteCharacter, setDeleteCharacter] = useState<Character | null>(null);
@@ -474,20 +476,28 @@ export function ClipsApp() {
     if (!window.clips) return;
     setPending('flow');
     setGateError('');
+    setLoginCancelled(false);
     try {
       const result = await window.clips.connectFlow();
       if (result.ok) {
         setSnapshot((current) => current ? { ...current, capabilities: result.data } : current);
         announce(translate(locale, 'account.connectedToast'));
         if (!localStorage.getItem('clips-onboarding-complete')) setOnboardingStep(0);
-      } else { setGateError(result.error.message); announce(result.error.message, 'error'); }
+      } else if (result.error.code === 'SIGN_IN_CANCELLED') {
+        setLoginCancelled(true);
+        if (view === 'profile') announce(translate(locale, 'startup.loginCancelled'));
+      } else {
+        const message = translate(locale, 'startup.loginError');
+        setGateError(message);
+        announce(message, 'error');
+      }
     } catch {
       setGateError(translate(locale, 'startup.loginError'));
-      announce(translate(locale, 'error.provider'), 'error');
+      announce(translate(locale, 'startup.loginError'), 'error');
     } finally {
       setPending('');
     }
-  }, [announce, locale]);
+  }, [announce, locale, view]);
 
   const addFlowAccount = useCallback(async () => {
     if (!window.clips) return;
@@ -498,9 +508,12 @@ export function ClipsApp() {
       if (result.ok) {
         await load();
         announce(translate(locale, 'account.connectedToast'));
+      } else if (result.error.code === 'SIGN_IN_CANCELLED') {
+        announce(translate(locale, 'startup.loginCancelled'));
       } else {
-        setGateError(result.error.message);
-        announce(result.error.message, 'error');
+        const message = translate(locale, 'startup.loginError');
+        setGateError(message);
+        announce(message, 'error');
       }
     } catch {
       setGateError(translate(locale, 'startup.loginError'));
@@ -581,7 +594,7 @@ export function ClipsApp() {
 
   if (welcomeStep !== null) return <Onboarding step={welcomeStep} locale={locale} onStep={setWelcomeStep} onDone={finishWelcome} onLocale={(value) => void setLocale(value)} t={t} />;
   if (!snapshot.flowNoticeAccepted) return <TermsGate checked={flowNoticeChecked} error={gateError} busy={pending === 'accept-notice'} onChecked={setFlowNoticeChecked} onAccept={() => void acceptFlowNotice()} t={t} />;
-  if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate snapshot={snapshot} status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} busy={Boolean(pending)} onConnect={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} t={t} />;
+  if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate snapshot={snapshot} status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} cancelled={loginCancelled} busy={Boolean(pending)} onConnect={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} t={t} />;
   if (snapshot.capabilities.provider === 'mock' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <FlowSignInGate snapshot={snapshot} status="mock-ready" detail={snapshot.capabilities.detail} error={gateError} busy={false} onConnect={() => { setOnboardingStep(0); }} onAddAccount={() => undefined} onSelectAccount={() => undefined} t={t} />;
 
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
@@ -667,11 +680,12 @@ function TermsGate({ checked, error, busy, onChecked, onAccept, t }: {
   </Modal></div>;
 }
 
-function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAddAccount, onSelectAccount, t }: {
+function FlowSignInGate({ snapshot, status, detail, error, cancelled = false, busy, onConnect, onAddAccount, onSelectAccount, t }: {
   snapshot: AppSnapshot;
   status: AppSnapshot['capabilities']['status'];
   detail: string;
   error: string;
+  cancelled?: boolean;
   busy: boolean;
   onConnect: () => void;
   onAddAccount: () => void;
@@ -692,6 +706,7 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
       })}
     </div> : null}
     {!local && accounts.some((account) => account.connection === 'connected') ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
+    {cancelled ? <p className="startup-login-cancelled" role="status">{t('startup.loginCancelled')}</p> : null}
     {error ? <p className="startup-error" role="alert">{error}</p> : null}
   </Modal></div>;
 }
