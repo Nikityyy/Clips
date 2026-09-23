@@ -1,0 +1,36 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+release/
+coverage/
+playwright-report/
+test-results/
+
+# Local data and secrets
+.env*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Machine-local agent configuration
+/.codex/
+/.impeccable/
+/.claude/
+/.agents/
+/.impeccable/config.local.json
+
+# Generated review artifacts
+/.impeccable/build/
+/.impeccable/review/
+
+# Electron compilation and TypeScript incremental state
+/out-electron/
+*.tsbuildinfo

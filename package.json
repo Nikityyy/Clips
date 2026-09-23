@@ -1,0 +1,103 @@
+{
+  "name": "clips",
+  "version": "1.0.0",
+  "description": "A local-first studio for characters, images, and video.",
+  "author": "Nikita Berger",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nikityyy/Clips.git"
+  },
+  "homepage": "https://github.com/Nikityyy/Clips",
+  "bugs": {
+    "url": "https://github.com/Nikityyy/Clips/issues"
+  },
+  "private": false,
+  "main": "out-electron/electron/main.js",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail \"npm:dev:web\" \"npm:dev:electron:watch\" \"npm:dev:desktop\"",
+    "dev:web": "next dev --hostname 127.0.0.1 --port 3000",
+    "dev:electron:watch": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
+    "dev:desktop": "wait-on tcp:127.0.0.1:3000 file:out-electron/electron/main.js && electron out-electron/electron/main.js",
+    "build": "npm run build:web && npm run build:electron",
+    "build:web": "next build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "start": "electron out-electron/electron/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
+    "test": "vitest run",
+    "package": "npm run build && electron-builder",
+    "package:win": "npm run build && electron-builder --win",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:linux": "npm run build && electron-builder --linux",
+    "test:e2e": "npm run build:electron && concurrently --kill-others --success first \"npm:dev:web\" \"wait-on tcp:127.0.0.1:3000 && node tests/e2e-smoke.mjs\""
+  },
+  "dependencies": {
+    "@fontsource/mukta-mahee": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "lucide-react": "^1.47.0",
+    "next": "^16.3.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sql.js": "^1.14.2",
+    "tailwindcss": "^4.3.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sql.js": "^1.4.11",
+    "concurrently": "^10.0.5",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "playwright": "1.63.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "io.nikitayy.clips",
+    "productName": "Clips",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "files": [
+      "out/**/*",
+      "out-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "public/media/mock",
+        "to": "media/mock",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "category": "Graphics",
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}
