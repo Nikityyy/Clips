@@ -20,10 +20,11 @@ const catalog = JSON.stringify({
 
 describe('gflow-cli adapter data', () => {
 
-  it('starts sign-in at Google and redirects back to the Flow editor', () => {
+  it('starts sign-in at Google and redirects directly to Flow', () => {
+    expect(GOOGLE_LOGIN_ENTRY_URL).toBe('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F');
     const login = new URL(GOOGLE_LOGIN_ENTRY_URL);
     expect(login.hostname).toBe('accounts.google.com');
-    expect(login.searchParams.get('continue')).toBe('https://labs.google/fx/tools/flow?hl=en');
+    expect(login.searchParams.get('continue')).toBe('https://flow.google.com/');
   });
 
   it('patches both pinned gflow browser strategies to open the direct Google sign-in page', async () => {

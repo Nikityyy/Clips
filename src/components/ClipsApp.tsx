@@ -667,7 +667,7 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
   const local = status === 'mock-ready';
   const accounts = snapshot.accounts.filter((item) => item.provider === 'google-flow');
   const activeAccount = accounts.find((item) => item.id === snapshot.settings.activeAccountId);
-  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" draggableTitlebar focusSurface footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy && status !== 'checking'} disabled={busy || status === 'checking'} onClick={onConnect}>{t(local ? 'startup.localAction' : activeAccount ? 'startup.loginSavedAccount' : 'startup.loginAction')}</Button></div>}>
+  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" draggableTitlebar focusSurface footer={<div className="startup-footer"><span>{busy ? status === 'checking' && detail ? detail : t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy} disabled={busy} onClick={onConnect}>{t(local ? 'startup.localAction' : activeAccount ? 'startup.loginSavedAccount' : 'startup.loginAction')}</Button></div>}>
     <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{local ? t('account.localTitle') : activeAccount?.label ?? t('account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
     {!local && accounts.length > 1 ? <div className="startup-account-options" aria-label={t('account.savedAccounts')}>
       {accounts.map((account) => {
@@ -677,7 +677,7 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
         </button>;
       })}
     </div> : null}
-    {!local && activeAccount ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
+    {!local && snapshot.capabilities.profileName ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
     {error ? <p className="startup-error" role="alert">{error}</p> : null}
   </Modal></div>;
 }

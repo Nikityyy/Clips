@@ -37,6 +37,7 @@ try {
   const runtime = await app.evaluate(({ app: electronApp }) => ({ packaged: electronApp.isPackaged, userData: electronApp.getPath('userData') }));
   assert.equal(runtime.packaged, true);
   assert.equal(path.resolve(runtime.userData).toLowerCase(), path.resolve(isolation).toLowerCase());
+  assert.equal(existsSync(path.join(runtime.userData, 'runtime')), false, 'opening a fresh packaged app should not prepare the Flow runtime before the user accepts its notice');
   const packagedFiles = listPackage(archivePath, { isPack: false }).map((file) => file.replaceAll('\\', '/').replace(/^\/+/, ''));
   const fixtureFiles = packagedFiles.filter((file) => /(?:^|\/)(?:fixtures\/dev-media|media\/mock)(?:\/|$)/i.test(file));
   const productionPackages = packagedFiles.filter((file) => file.startsWith('node_modules/')).map((file) => file.split('/').slice(0, 2).join('/'));
@@ -59,7 +60,6 @@ try {
   await terms.getByRole('button', { name: /Continue to Google sign-in|Weiter zur Google-Anmeldung/ }).click();
   const signIn = page.getByRole('dialog');
   await signIn.getByRole('heading', { name: /Connect your Google account|Google-Konto verbinden/ }).waitFor();
-  assert.equal(existsSync(path.join(runtime.userData, 'runtime')), false, 'the unpacked app should not initialize runtime before explicit sign-in');
   assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
   console.log('Packaged app smoke test passed: isolated empty library, Flow-only provider, and no development sample fixtures in app.asar.');
 } finally {

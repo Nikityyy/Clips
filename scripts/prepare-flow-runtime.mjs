@@ -59,6 +59,7 @@ try {
   await run(uvPath, ['python', 'install', spec.pythonVersion], runtimeEnv);
   await run(uvPath, ['tool', 'run', '--python', spec.pythonVersion, '--from', `gflow-cli==${spec.gflowVersion}`, 'gflow', '--help'], runtimeEnv);
   await run(uvPath, ['tool', 'run', '--python', spec.pythonVersion, '--from', `gflow-cli==${spec.gflowVersion}`, 'playwright', 'install', 'chromium', '--no-shell'], runtimeEnv);
+  await fs.writeFile(path.join(seedRoot, 'browsers', `clips-chromium-${spec.gflowVersion}.ready`), spec.gflowVersion, 'utf8');
   await fs.writeFile(path.join(seedRoot, 'runtime-info.json'), JSON.stringify({ gflowVersion: spec.gflowVersion, pythonVersion: spec.pythonVersion }));
   const archiveCache = path.join(seedRoot, 'uv', 'cache', 'archive-v0');
   for (const entry of await fs.readdir(archiveCache, { withFileTypes: true }).catch(() => [])) {

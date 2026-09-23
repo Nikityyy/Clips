@@ -35,8 +35,7 @@ const DEFAULT_PROFILE = 'clips';
 const GFLOW_VERSION = runtimeSpec.gflowVersion;
 const UV_VERSION = runtimeSpec.uvVersion;
 const FLOW_PYTHON = runtimeSpec.pythonVersion;
-const FLOW_EDITOR_URL = 'https://labs.google/fx/tools/flow?hl=en';
-export const GOOGLE_LOGIN_ENTRY_URL = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(FLOW_EDITOR_URL)}`;
+export const GOOGLE_LOGIN_ENTRY_URL = 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F';
 const UV_RELEASES = 'https://releases.astral.sh/github/uv/releases/download';
 export const UV_BUILDS = runtimeSpec.builds as Record<string, { archive: string; sha256: string; executable: string }>;
 
@@ -154,6 +153,7 @@ export class GFlowCli {
   private readonly userDataPath: () => string;
   private readonly bundledRuntimePath: (() => string | null) | null;
   private setupPromise: Promise<{ executable: string; env: NodeJS.ProcessEnv }> | null = null;
+  private signInPreparationPromise: Promise<void> | null = null;
 
   constructor(userDataPath: () => string = () => path.join(os.homedir(), '.clips'), bundledRuntimePath: (() => string | null) | null = null) {
     this.userDataPath = userDataPath;
@@ -161,10 +161,7 @@ export class GFlowCli {
   }
 
   async prewarm(): Promise<void> {
-    const setup = await this.runtime();
-    const env = { ...setup.env, UV_OFFLINE: '1' };
-    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', '--help'], env, 120_000);
-    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], env, 120_000);
+    await this.prepareSignIn();
   }
 
   async catalog(): Promise<FlowCatalog> {
@@ -178,9 +175,7 @@ export class GFlowCli {
   }
 
   async login(profileName = DEFAULT_PROFILE): Promise<void> {
-    await this.setupBrowser();
-    await this.run(['auth', '--help'], 90_000);
-    await this.patchGoogleLoginEntryPoint();
+    await this.prepareSignIn();
     await this.run(['auth', 'login', '--profile', profileName, '--browser', 'auto'], 15 * 60_000);
   }
 
@@ -193,9 +188,27 @@ export class GFlowCli {
     await patchGoogleLoginSources(cache);
   }
 
-  private async setupBrowser(): Promise<void> {
-    const setup = await this.runtime();
-    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], setup.env, 18 * 60_000);
+  private async prepareSignIn(): Promise<void> {
+    if (!this.signInPreparationPromise) {
+      this.signInPreparationPromise = (async () => {
+        const setup = await this.runtime();
+        const readyMarker = path.join(this.userDataPath(), 'runtime', `signin-ready-${GFLOW_VERSION}.ready`);
+        if (await fs.access(readyMarker).then(() => true, () => false)) return;
+        await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', '--help'], setup.env, 120_000);
+        const browserMarker = path.join(setup.env.PLAYWRIGHT_BROWSERS_PATH ?? '', `clips-chromium-${GFLOW_VERSION}.ready`);
+        const browserReady = await fs.access(browserMarker).then(() => true, () => false);
+        if (!browserReady) {
+          await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], setup.env, 18 * 60_000);
+          await fs.writeFile(browserMarker, GFLOW_VERSION, 'utf8');
+        }
+        await this.patchGoogleLoginEntryPoint();
+        await fs.writeFile(readyMarker, GFLOW_VERSION, 'utf8');
+      })().catch((error: unknown) => {
+        this.signInPreparationPromise = null;
+        throw error;
+      });
+    }
+    await this.signInPreparationPromise;
   }
 
   async verifySession(profileName = DEFAULT_PROFILE): Promise<string> {
