@@ -384,7 +384,10 @@ function pruneAnonymousPendingFlowAccounts(): boolean {
 }
 
 function startFlowSignInPreparation(): void {
-  if (MOCK_PROVIDER_ENABLED || !flowNoticeAccepted()) return;
+  if (MOCK_PROVIDER_ENABLED) return;
+  // Warm the private connector and browser while the user reviews onboarding
+  // and the Flow notice. This downloads local runtime files only; it does not
+  // open Google, sign in, or send prompts or media.
   void flowCli.prewarm().catch((error: unknown) => console.warn('Flow sign-in preparation failed:', error));
 }
 
