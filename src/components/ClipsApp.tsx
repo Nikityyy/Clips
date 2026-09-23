@@ -677,7 +677,7 @@ function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAd
         </button>;
       })}
     </div> : null}
-    {!local && snapshot.capabilities.profileName ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
+    {!local && accounts.some((account) => account.connection === 'connected') ? <Button className="startup-switch-account" size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('startup.useAnotherAccount')}</Button> : null}
     {error ? <p className="startup-error" role="alert">{error}</p> : null}
   </Modal></div>;
 }
