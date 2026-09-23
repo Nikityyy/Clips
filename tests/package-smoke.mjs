@@ -31,6 +31,8 @@ try {
   page.on('pageerror', (error) => rendererErrors.push(error.message));
   page.on('console', (message) => { if (message.type() === 'error') rendererErrors.push(message.text()); });
   await page.waitForFunction(() => Boolean(window.clips), { timeout: 45_000 });
+  await page.getByRole('button', { name: /Skip setup|Einrichtung überspringen/ }).click();
+  await page.locator('.startup-consent').waitFor({ timeout: 45_000 });
   const runtime = await app.evaluate(({ app: electronApp }) => ({ packaged: electronApp.isPackaged, userData: electronApp.getPath('userData') }));
   assert.equal(runtime.packaged, true);
   assert.equal(path.resolve(runtime.userData).toLowerCase(), path.resolve(isolation).toLowerCase());
@@ -43,15 +45,12 @@ try {
   assert.equal(existsSync(path.join(root, 'fixtures', 'dev-media')), true, 'development fixtures should remain available to the source workspace');
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => document.fonts.check('500 14px "Manrope Variable"')), true, 'the packaged app should load the bundled Manrope font');
-  assert.equal(await page.locator('.onboarding-visual').count(), 1, 'the packaged app should show its animated first-run preview');
+  assert.equal(await page.locator('.startup-consent').count(), 1, 'the packaged app should require the first-run connector notice before sign-in');
   const snapshot = await page.evaluate(async () => window.clips.getSnapshot());
   assert.ok(snapshot.ok, 'packaged app should open its local database');
   assert.equal(snapshot.data.assets.length, 0, 'a new packaged app should start with an empty media library');
   assert.equal(snapshot.data.characters.length, 0, 'a new packaged app should not preload example characters');
   assert.ok(snapshot.data.capabilities.models.length === 0 || snapshot.data.capabilities.provider === 'google-flow', 'the installed app should use Google Flow, never bundled mock models');
-  const welcome = page.getByRole('dialog');
-  for (let step = 0; step < 3; step += 1) await welcome.getByRole('button', { name: /Continue|Fortfahren/ }).click();
-  await welcome.getByRole('button', { name: /Open the studio|Studio öffnen/ }).click();
   const terms = page.getByRole('dialog');
   await terms.getByRole('heading', { name: /Before you connect Google Flow|Bevor du Google Flow verbindest/ }).waitFor();
   assert.equal(await terms.getByRole('button', { name: /Continue to Google sign-in|Weiter zur Google-Anmeldung/ }).isDisabled(), true, 'the packaged app should require the notice checkbox');
@@ -59,7 +58,7 @@ try {
   await terms.getByRole('button', { name: /Continue to Google sign-in|Weiter zur Google-Anmeldung/ }).click();
   const signIn = page.getByRole('dialog');
   await signIn.getByRole('heading', { name: /Connect your Google account|Google-Konto verbinden/ }).waitFor();
-  assert.equal(existsSync(path.join(runtime.userData, 'runtime')), false, 'first-run UI should not download the connector before the user chooses to sign in');
+  assert.equal(existsSync(path.join(runtime.userData, 'runtime')), false, 'the unpacked app should not initialize runtime before explicit sign-in');
   assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
   console.log('Packaged app smoke test passed: isolated empty library, Flow-only provider, and no development sample fixtures in app.asar.');
 } finally {

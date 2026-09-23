@@ -26,13 +26,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "lint": "oxlint .",
     "test": "vitest run",
-    "package": "npm run build && electron-builder",
-    "package:win": "npm run build && electron-builder --win",
-    "package:mac": "npm run build && electron-builder --mac",
-    "package:linux": "npm run build && electron-builder --linux",
+    "package": "npm run build && npm run prepare:flow-runtime && electron-builder",
+    "package:win": "npm run build && npm run prepare:flow-runtime && electron-builder --win",
+    "package:mac": "npm run build && npm run prepare:flow-runtime && electron-builder --mac",
+    "package:linux": "npm run build && npm run prepare:flow-runtime && electron-builder --linux",
     "test:e2e": "npm run build:electron && concurrently --kill-others --success first \"npm:dev:web\" \"wait-on tcp:127.0.0.1:3000 && node tests/e2e-smoke.mjs && node tests/e2e-dev-seed.mjs\"",
     "test:package": "node tests/package-smoke.mjs",
-    "generate:icons": "node scripts/generate-icons.mjs"
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "prepare:flow-runtime": "node scripts/prepare-flow-runtime.mjs"
   },
   "dependencies": {
     "sql.js": "^1.14.2",
@@ -138,6 +139,12 @@
       "category": "public.app-category.graphics-design",
       "target": [
         "dmg"
+      ],
+      "extraResources": [
+        {
+          "from": "build/flow-runtime-seed",
+          "to": "flow-runtime-seed"
+        }
       ]
     },
     "win": {
@@ -150,13 +157,20 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "license": "build/license_en.txt"
+      "license": "build/license_en.txt",
+      "include": "build/installer.nsh"
     },
     "linux": {
       "icon": "assets/clips.png",
       "category": "Graphics",
       "target": [
         "AppImage"
+      ],
+      "extraResources": [
+        {
+          "from": "build/flow-runtime-seed",
+          "to": "flow-runtime-seed"
+        }
       ]
     },
     "electronLanguages": [

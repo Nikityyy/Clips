@@ -99,7 +99,10 @@ const LEGAL_LINKS = {
   'gflow-disclaimer': 'https://github.com/ffroliva/gflow-cli/blob/develop/DISCLAIMER.md',
 } as const;
 const TRUSTED_NO_INPUT = z.undefined();
-const flowCli = new GFlowCli(() => app.getPath('userData'));
+const flowCli = new GFlowCli(
+  () => app.getPath('userData'),
+  () => app.isPackaged && process.platform !== 'win32' ? path.join(process.resourcesPath, 'flow-runtime-seed') : null,
+);
 
 function makeMockCapabilities(): ProviderCapabilities {
   return {
@@ -1713,6 +1716,7 @@ function registerIpc(): void {
 async function initialize(): Promise<void> {
   await app.whenReady();
   app.setName('Clips');
+  if (app.isPackaged && process.platform !== 'win32') void flowCli.prewarm().catch((error: unknown) => console.warn('Bundled Flow runtime prewarm failed:', error));
   const userData = app.getPath('userData');
   mediaDirectory = path.join(userData, 'media');
   windowStatePath = path.join(userData, 'window-state.json');

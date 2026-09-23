@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+import runtimeSpec from './flow-runtime-spec.json';
 
 export type FlowJobKind = 'image' | 'video';
 
@@ -31,16 +32,11 @@ export interface FlowProfile {
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_PROFILE = 'clips';
-const GFLOW_VERSION = '0.79.1';
-const UV_VERSION = '0.12.18';
+const GFLOW_VERSION = runtimeSpec.gflowVersion;
+const UV_VERSION = runtimeSpec.uvVersion;
+const FLOW_PYTHON = runtimeSpec.pythonVersion;
 const UV_RELEASES = 'https://releases.astral.sh/github/uv/releases/download';
-export const UV_BUILDS: Record<string, { archive: string; sha256: string; executable: string }> = {
-  'win32-x64': { archive: 'uv-x86_64-pc-windows-msvc.zip', sha256: 'cae6a3bc25239f83dffb467a4b180508d9da23986c04639ebfa44e43e6a84bff', executable: 'uv.exe' },
-  'darwin-x64': { archive: 'uv-x86_64-apple-darwin.tar.gz', sha256: '2e4108f5395397c8bc5d43bf83d3bdbb2d0e92b90d0efa607756be704905fa33', executable: 'uv-x86_64-apple-darwin/uv' },
-  'darwin-arm64': { archive: 'uv-aarch64-apple-darwin.tar.gz', sha256: 'cf40e0c6a202190ccd9e0406dcfdd5b2d6668a9a5c779b17948963df32aafe5b', executable: 'uv-aarch64-apple-darwin/uv' },
-  'linux-x64': { archive: 'uv-x86_64-unknown-linux-gnu.tar.gz', sha256: '89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16', executable: 'uv-x86_64-unknown-linux-gnu/uv' },
-  'linux-arm64': { archive: 'uv-aarch64-unknown-linux-gnu.tar.gz', sha256: 'afb6291f3f0a6b4521fc67b947822506c41dde5b60d2189dd8f3695b2ac8c9e7', executable: 'uv-aarch64-unknown-linux-gnu/uv' },
-};
+export const UV_BUILDS = runtimeSpec.builds as Record<string, { archive: string; sha256: string; executable: string }>;
 
 function parseRatioList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -126,10 +122,19 @@ export function parseGenerationPaths(json: string, kind: FlowJobKind): string[] 
 export class GFlowCli {
   readonly profileName = DEFAULT_PROFILE;
   private readonly userDataPath: () => string;
+  private readonly bundledRuntimePath: (() => string | null) | null;
   private setupPromise: Promise<{ executable: string; env: NodeJS.ProcessEnv }> | null = null;
 
-  constructor(userDataPath: () => string = () => path.join(os.homedir(), '.clips')) {
+  constructor(userDataPath: () => string = () => path.join(os.homedir(), '.clips'), bundledRuntimePath: (() => string | null) | null = null) {
     this.userDataPath = userDataPath;
+    this.bundledRuntimePath = bundledRuntimePath;
+  }
+
+  async prewarm(): Promise<void> {
+    const setup = await this.runtime();
+    const env = { ...setup.env, UV_OFFLINE: '1' };
+    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', '--help'], env, 120_000);
+    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], env, 120_000);
   }
 
   async catalog(): Promise<FlowCatalog> {
@@ -149,7 +154,7 @@ export class GFlowCli {
 
   private async setupBrowser(): Promise<void> {
     const setup = await this.runtime();
-    await this.runCommand(setup.executable, ['tool', 'run', '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium'], setup.env, 18 * 60_000);
+    await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], setup.env, 18 * 60_000);
   }
 
   async verifySession(): Promise<string> {
@@ -169,7 +174,7 @@ export class GFlowCli {
 
   private async run(args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
     const setup = await this.runtime();
-    return this.runCommand(setup.executable, ['tool', 'run', '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', ...args], setup.env, timeoutMs);
+    return this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', ...args], setup.env, timeoutMs);
   }
 
   private async runtime(): Promise<{ executable: string; env: NodeJS.ProcessEnv }> {
@@ -184,6 +189,14 @@ export class GFlowCli {
 
   private async prepareRuntime(): Promise<{ executable: string; env: NodeJS.ProcessEnv }> {
     const root = path.join(this.userDataPath(), 'runtime');
+    const target = path.join(root, 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv');
+    if (!process.env.UV_PATH && !await fs.access(target).then(() => true, () => false) && this.bundledRuntimePath) {
+      const seed = this.bundledRuntimePath();
+      if (seed) {
+        await fs.cp(seed, root, { recursive: true, force: false, errorOnExist: false });
+        await fs.rm(path.join(root, 'runtime-info.json'), { force: true });
+      }
+    }
     const existingUv = process.env.UV_PATH;
     const uvPath = existingUv || await this.ensureUv(root);
     const env = {
@@ -193,6 +206,8 @@ export class GFlowCli {
       UV_TOOL_DIR: path.join(root, 'uv', 'tools'),
       UV_CACHE_DIR: path.join(root, 'uv', 'cache'),
       UV_PYTHON_INSTALL_DIR: path.join(root, 'uv', 'python'),
+      UV_MANAGED_PYTHON: '1',
+      UV_PYTHON_DOWNLOADS: 'automatic',
       PLAYWRIGHT_BROWSERS_PATH: path.join(root, 'browsers'),
     };
     await Promise.all([env.GFLOW_CLI_HOME, env.UV_TOOL_DIR, env.UV_CACHE_DIR, env.UV_PYTHON_INSTALL_DIR, env.PLAYWRIGHT_BROWSERS_PATH].map((directory) => fs.mkdir(directory, { recursive: true })));

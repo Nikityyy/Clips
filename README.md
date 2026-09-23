@@ -15,13 +15,13 @@ Development starts with a local test provider and a ready-to-explore sample libr
 
 ## Connect Google Flow
 
-Clips uses the open-source [gflow-cli](https://github.com/ffroliva/gflow-cli) connector. You do not need to install it separately: after reviewing and accepting the required first-run notice, choose **Continue with Google** in Clips. On the first sign-in, Clips downloads a pinned copy of Astral's `uv` runtime, installs the pinned connector and its Chromium browser into the current user's application-data folder, and opens a private browser for Google's sign-in. This setup needs an internet connection and several hundred megabytes of free space; it runs only after you choose to connect. Later sign-ins reuse the installed runtime.
+Clips uses the open-source [gflow-cli](https://github.com/ffroliva/gflow-cli) connector. You do not need to install it separately: after reviewing and accepting the required first-run notice, choose **Continue with Google** in Clips. In development, Clips downloads the pinned runtime after you choose Google sign-in. The Windows installer prepares the pinned `uv`, gflow-cli, managed Python, and Chromium runtime in the current user's Clips data folder during installation, so first sign-in can open the private Google sign-in browser without a setup download. macOS and Linux installers bundle the same verified runtime and Clips prepares its writable per-user copy when the app first opens. The bundled runtime increases installer size by several hundred megabytes; no system-wide tools are installed.
 
 The connector keeps its own local Flow profile. Clips never reads or stores your Google password, cookies, or session token. Generations are started from Clips and their output files are imported into the Clips library. Development mode can use the local mock provider and sample media without signing in; packaged releases contain neither sample media nor the development provider.
 
 The connector is unofficial, alpha, and reverse-engineered; it is not affiliated with Google, and Flow changes may break it. Its `gflow models --json` catalog supplies the model aliases, accepted aspect ratios, and reference-image limits shown in Clips. Video generation may use Flow credits from your account. Review the connector’s [disclaimer](https://github.com/ffroliva/gflow-cli/blob/main/DISCLAIMER.md) and Google’s terms before connecting.
 
-The managed connector runtime, Python environment, browser, profile, and cache stay under Clips' per-user application-data directory. Removing that folder removes this managed runtime and local data. On Linux, the system `tar` utility is also required to unpack the first-use runtime download.
+The managed connector runtime, Python environment, browser, profile, and cache stay under Clips' per-user application-data directory. Removing that folder removes this managed runtime and local data. Development builds require the system `tar` utility to unpack the first-use runtime download.
 
 ## Local data
 

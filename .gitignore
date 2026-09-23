@@ -33,4 +33,5 @@ Thumbs.db
 
 # Electron compilation and TypeScript incremental state
 /out-electron/
+/build/flow-runtime-seed/
 *.tsbuildinfo
