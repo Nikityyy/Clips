@@ -1,59 +1,34 @@
 'use client';
 
-import { useState } from 'react';
-import { ArrowUpRight, FolderOpen, ImageOff, Info, UserRound } from 'lucide-react';
-import type { AppSnapshot, SettingsPatch } from '@/shared/contracts';
-import type { Translate, View } from '@/lib/app-types';
+import { useEffect, useState } from 'react';
+import { ArrowUpRight, FolderOpen, Info, UserRound } from 'lucide-react';
+import type { AppSnapshot, SettingsPatch, StorageSummary } from '@/shared/contracts';
+import type { Translate } from '@/lib/app-types';
 import { Button, FieldLabel } from '@/components/ui';
+import { fileSize } from '@/lib/i18n';
 
 const ratios = ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'];
 
-export function StudioLanding({ snapshot, t, onOpenFlow }: { snapshot: AppSnapshot; t: Translate; onOpenFlow: () => void }) {
-  const samples = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === 'image').slice(0, 6);
-  return (
-    <main className="workspace-content studio-landing" id="workspace-content" tabIndex={-1}>
-      <div className="studio-landing-heading">
-        <div><h1>{t('workspace.landingTitle')}</h1><p>{t('workspace.landingBody')}</p></div>
-        <span className="studio-label"><span className="studio-label-rule" />{t('workspace.sampleLabel')}</span>
-      </div>
-      <section className="workflow-strip" aria-label={t('workspace.workflow')}>
-        <div><span className="workflow-symbol"><UserRound size={17} aria-hidden="true" /></span><span>{t('onboarding.characters')}</span></div>
-        <span className="workflow-connector" aria-hidden="true" />
-        <div><span className="workflow-symbol"><span className="workflow-image-mark" /></span><span>{t('onboarding.images')}</span></div>
-        <span className="workflow-connector" aria-hidden="true" />
-        <div><span className="workflow-symbol"><span className="workflow-video-mark" /></span><span>{t('onboarding.video')}</span></div>
-      </section>
-      <div className="sample-plate-heading"><h2>{t('workspace.samplesTitle')}</h2><span>{t('workspace.samplesNote')}</span></div>
-      {samples.length ? <div className="sample-plate" aria-label={t('workspace.samplesTitle')}>
-        {samples.map((asset, index) => <div className="sample-plate-item" key={asset.id} style={{ ['--tile-index' as string]: index }}>
-          <img src={asset.uri} alt="" loading="lazy" decoding="async" />
-          <span className="sample-plate-caption">{asset.title}</span>
-        </div>)}
-      </div> : <div className="sample-plate-empty"><ImageOff size={18} aria-hidden="true" /><span>{t('workspace.samplesEmpty')}</span></div>}
-      <div className="studio-landing-footer"><span className="landing-rule" /><p>{t('workspace.localPromise')}</p><Button variant="quiet" size="small" icon={ArrowUpRight} onClick={onOpenFlow}>{t('account.openFlow')}</Button></div>
-    </main>
-  );
-}
-
-export function PhaseWorkspace({ view, t }: { view: Exclude<View, 'create' | 'settings' | 'profile'>; t: Translate }) {
-  const key = `nav.${view}` as const;
-  return (
-    <main className="workspace-content phase-workspace" id="workspace-content" tabIndex={-1}>
-      <div className="phase-workspace-mark"><FolderOpen size={23} strokeWidth={1.4} aria-hidden="true" /></div>
-      <h1>{t(key)}</h1>
-      <p>{t('workspace.inProgress')}</p>
-      <span className="phase-rule" aria-hidden="true" />
-    </main>
-  );
-}
-
-export function SettingsWorkspace({ snapshot, onLocale, onSettings, onReplayTutorial, t }: {
+export function SettingsWorkspace({ snapshot, onLocale, onSettings, onReplayTutorial, onOpenDataFolder, busy, t }: {
   snapshot: AppSnapshot;
   onLocale: (locale: 'en' | 'de') => void;
   onSettings: (patch: SettingsPatch) => void;
   onReplayTutorial: () => void;
+  onOpenDataFolder: () => void;
+  busy: boolean;
   t: Translate;
 }) {
+  const [storage, setStorage] = useState<StorageSummary | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    void window.clips?.getStorageSummary().then((result) => {
+      if (!mounted) return;
+      if (result.ok) setStorage(result.data);
+      else setStorageUnavailable(true);
+    }).catch(() => { if (mounted) setStorageUnavailable(true); });
+    return () => { mounted = false; };
+  }, []);
   const imageModels = snapshot.capabilities.models.filter((model) => model.kind === 'image');
   const videoModels = snapshot.capabilities.models.filter((model) => model.kind === 'video');
   const modelName = (id: string, label: string) => id === 'mock-image' ? t('model.portraitStudy') : id === 'mock-video' ? t('model.motionStudy') : label;
@@ -74,7 +49,12 @@ export function SettingsWorkspace({ snapshot, onLocale, onSettings, onReplayTuto
       <section className="settings-section">
         <div className="settings-section-heading"><h2>{t('settings.storage')}</h2></div>
         <p className="settings-explainer">{t('settings.storageHint')}</p>
-        <p className="location-note"><FolderOpen size={15} aria-hidden="true" />{t('settings.storageLocation')}</p>
+        <p className="location-note" data-testid="storage-directory" title={storage?.directory ?? undefined}><FolderOpen size={15} aria-hidden="true" /><span>{storage?.directory ?? t(storageUnavailable ? 'settings.storageUnavailable' : 'settings.storageLoading')}</span></p>
+        <div className="storage-metrics" aria-label={t('settings.storageUsage')}>
+          <div><span>{t('settings.mediaFiles')}</span><strong>{storage ? `${new Intl.NumberFormat(snapshot.settings.locale).format(storage.mediaFiles)} · ${fileSize(snapshot.settings.locale, storage.mediaBytes)}` : '—'}</strong></div>
+          <div><span>{t('settings.databaseSize')}</span><strong>{storage ? fileSize(snapshot.settings.locale, storage.databaseBytes) : '—'}</strong></div>
+        </div>
+        <Button size="small" icon={FolderOpen} disabled={busy || !storage} onClick={onOpenDataFolder}>{t('settings.openDataFolder')}</Button>
       </section>
       <section className="settings-section">
         <div className="settings-section-heading"><h2>{t('settings.appearance')}</h2></div><p className="settings-explainer">{t('settings.appearanceHint')}</p>

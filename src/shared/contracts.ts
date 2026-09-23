@@ -8,11 +8,15 @@ export type AssetSource = 'import' | 'clipboard' | 'mock' | 'flow-handoff';
 export type ProviderKind = 'mock' | 'google-flow';
 export type JobKind = 'image' | 'video';
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type NativeMenuAction = 'import' | 'create' | 'characters' | 'images' | 'videos' | 'library' | 'queue' | 'settings';
 
 /** Fixed invoke/event routes shared by the isolated preload and the main process. */
 export const IPC_CHANNELS = {
   snapshotUpdated: 'clips:snapshot',
+  menuAction: 'clips:menu-action',
   getSnapshot: 'clips:get-snapshot',
+  getStorageSummary: 'clips:get-storage-summary',
+  openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
   importFlowFiles: 'clips:import-flow-files',
   importPaths: 'clips:import-paths',
@@ -256,9 +260,19 @@ export interface SettingsPatch {
   outputCount?: number;
 }
 
+export interface StorageSummary {
+  directory: string;
+  mediaFiles: number;
+  mediaBytes: number;
+  databaseBytes: number;
+}
+
 export interface ClipsApi {
   getSnapshot(): Promise<Result<AppSnapshot>>;
+  getStorageSummary(): Promise<Result<StorageSummary>>;
+  openDataFolder(): Promise<Result<void>>;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
+  subscribeMenuAction(listener: (action: NativeMenuAction) => void): () => void;
 
   importFiles(): Promise<Result<ImportSummary>>;
   /** Import files manually downloaded from the official Flow site and label their origin. */

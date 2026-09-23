@@ -1,18 +1,19 @@
 'use client';
 
-import { useMemo, useState, type DragEvent } from 'react';
+import { useState, type DragEvent } from 'react';
 import {
   ArrowDownToLine, ArrowRight, Check, Clapperboard, FileImage, Film, FolderOpen, ImagePlus,
-  Images, Info, LoaderCircle, Minus, Plus, Sparkles, Trash2, UserRound, X,
+  Images, Info, Minus, MoreHorizontal, Plus, Sparkles, Trash2, UserRound, X,
 } from 'lucide-react';
 import type { AppSnapshot, Asset, GenerationDraft, GenerationJob, JobKind } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { dateTime, durationLabel, fileSize } from '@/lib/i18n';
+import type { TranslationKey } from '@/lib/i18n';
 import { Button, EmptyState, FieldLabel, IconButton, Modal, SectionHeading } from '@/components/ui';
 
 const ratios = ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'];
 
-export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters, onLibrary }: {
+export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters }: {
   snapshot: AppSnapshot;
   mode: JobKind;
   draft: GenerationDraft;
@@ -25,7 +26,6 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
   onDrop: (files: readonly File[]) => void;
   onCreate: () => void;
   onCharacters: () => void;
-  onLibrary: () => void;
 }) {
   const [picker, setPicker] = useState<'references' | 'source' | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -63,10 +63,11 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
         <span className="composer-local-pill"><span />{t('create.cost')}</span>
       </div>
 
-      <div className="mode-switch" role="group" aria-label={t('header.create')}>
+      <fieldset className="mode-switch">
+        <legend className="visually-hidden">{t('header.create')}</legend>
         <button type="button" className={mode === 'image' ? 'is-active' : ''} aria-pressed={mode === 'image'} onClick={() => onMode('image')}><Images size={15} aria-hidden="true" />{t('create.modeImage')}</button>
         <button type="button" className={mode === 'video' ? 'is-active' : ''} aria-pressed={mode === 'video'} onClick={() => onMode('video')}><Film size={15} aria-hidden="true" />{t('create.modeVideo')}</button>
-      </div>
+      </fieldset>
 
       {mode === 'video' ? <section className="composer-field source-frame-field">
         <FieldLabel>{t('create.sourceFrame')}</FieldLabel>
@@ -88,16 +89,28 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
 
       {mode === 'image' ? <section className="composer-field">
         <div className="composer-section-line"><FieldLabel>{t('create.references')}</FieldLabel><span className="field-hint">{selectedReferences.length} / 12</span></div>
-        {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div>
-          : <button type="button" className="reference-drop-zone" onClick={() => setPicker('references')}><Images size={17} aria-hidden="true" /><span>{t('create.referenceHint')}</span><ArrowRight size={14} aria-hidden="true" /></button>}
-        <div className="reference-actions"><Button size="small" variant="quiet" icon={Plus} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button><Button size="small" variant="quiet" icon={FolderOpen} onClick={onImport}>{t('create.importReference')}</Button><Button size="small" variant="quiet" icon={FileImage} onClick={onPaste}>{t('create.pasteReference')}</Button></div>
+        {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : null}
+        <div className="reference-actions">
+          <Button size="small" variant="secondary" icon={Plus} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button>
+          <details className="reference-more-menu">
+            <summary aria-label={t('create.moreReferenceOptions')} title={t('create.moreReferenceOptions')}><MoreHorizontal size={17} aria-hidden="true" /></summary>
+            <div className="reference-menu-actions">
+              <button type="button" onClick={onImport}><FolderOpen size={15} aria-hidden="true" />{t('create.importReference')}</button>
+              <button type="button" onClick={onPaste}><FileImage size={15} aria-hidden="true" />{t('create.pasteReference')}</button>
+            </div>
+          </details>
+        </div>
+        <p className="composer-hint">{t('create.referenceHint')}</p>
         {dragging ? <div className="composer-drop-overlay" aria-live="polite">{t('create.dropHere')}</div> : null}
       </section> : null}
 
-      <div className="composer-control-grid">
-        <div className="composer-field"><FieldLabel htmlFor="create-model">{t('create.model')}</FieldLabel><select id="create-model" className="select-control composer-select" value={draft.modelId} onChange={(event) => onDraft({ modelId: event.currentTarget.value })}>{snapshot.capabilities.models.filter((item) => item.kind === mode).map((item) => <option key={item.id} value={item.id}>{item.id === 'mock-image' ? t('model.portraitStudy') : item.id === 'mock-video' ? t('model.motionStudy') : item.label}</option>)}</select><p className="composer-hint">{imageModel.id === 'mock-image' ? t('create.modelDetailImage') : t('create.modelDetailVideo')}</p></div>
-        <div className="composer-field"><FieldLabel htmlFor="create-ratio">{t('create.ratio')}</FieldLabel><select id="create-ratio" className="select-control composer-select" value={draft.aspectRatio} onChange={(event) => onDraft({ aspectRatio: event.currentTarget.value })}>{ratios.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></div>
-      </div>
+      <details className="composer-advanced">
+        <summary>{t('create.moreOptions', { ratio: draft.aspectRatio })}</summary>
+        <div className="composer-control-grid">
+          <div className="composer-field"><FieldLabel htmlFor="create-model">{t('create.model')}</FieldLabel><select id="create-model" className="select-control composer-select" value={draft.modelId} onChange={(event) => onDraft({ modelId: event.currentTarget.value })}>{snapshot.capabilities.models.filter((item) => item.kind === mode).map((item) => <option key={item.id} value={item.id}>{item.id === 'mock-image' ? t('model.portraitStudy') : item.id === 'mock-video' ? t('model.motionStudy') : item.label}</option>)}</select><p className="composer-hint">{imageModel.id === 'mock-image' ? t('create.modelDetailImage') : t('create.modelDetailVideo')}</p></div>
+          <div className="composer-field"><FieldLabel htmlFor="create-ratio">{t('create.ratio')}</FieldLabel><select id="create-ratio" className="select-control composer-select" value={draft.aspectRatio} onChange={(event) => onDraft({ aspectRatio: event.currentTarget.value })}>{ratios.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></div>
+        </div>
+      </details>
 
       {mode === 'image' ? <section className="composer-field output-count-field"><FieldLabel>{t('create.outputs')}</FieldLabel><div className="count-control"><button type="button" aria-label={t('create.decreaseOutputs')} disabled={draft.outputCount <= 1} onClick={() => onDraft({ outputCount: Math.max(1, draft.outputCount - 1) })}><Minus size={14} aria-hidden="true" /></button><output aria-live="polite">{outputLabel}</output><button type="button" aria-label={t('create.increaseOutputs')} disabled={draft.outputCount >= 6} onClick={() => onDraft({ outputCount: Math.min(6, draft.outputCount + 1) })}><Plus size={14} aria-hidden="true" /></button></div></section> : null}
 
@@ -189,9 +202,9 @@ export function AssetDetails({ asset, snapshot, t, onDelete, onReveal, onUseRefe
   );
 }
 
-export function RecentJobs({ jobs, t, onRetry, onCancel }: { jobs: GenerationJob[]; t: Translate; onRetry?: (job: GenerationJob) => void; onCancel?: (job: GenerationJob) => void }) {
+export function RecentJobs({ jobs, t, onOpenQueue }: { jobs: GenerationJob[]; t: Translate; onOpenQueue?: () => void }) {
   const recent = jobs.slice(0, 5);
-  return <section className="recent-jobs-panel"><SectionHeading title={t('queue.history')} /><div className="recent-jobs-list">
+  return <section className="recent-jobs-panel"><SectionHeading title={t('queue.history')} action={onOpenQueue ? <Button size="small" variant="quiet" onClick={onOpenQueue}>{t('queue.viewAll')}</Button> : null} /><div className="recent-jobs-list">
     {recent.map((job) => <JobProgress key={job.id} job={job} t={t} />)}
     {!recent.length ? <p className="recent-jobs-empty">{t('queue.emptyBody')}</p> : null}
   </div></section>;
@@ -217,6 +230,7 @@ export function AssetPicker({ snapshot, selectedIds, single = false, title, t, o
 }
 
 function AssetMedia({ asset, t, controls = false }: { asset: Asset; t: Translate; controls?: boolean }) {
+  // oxlint-disable-next-line jsx-a11y/media-has-caption -- imported and sample videos can have no caption sidecar available to Clips.
   if (asset.kind === 'video') return <video className="asset-media-video" src={asset.uri} controls={controls} preload="metadata" aria-label={`${t('studio.play')}: ${asset.title}`} />;
   return <img className="asset-media-image" src={asset.uri} alt={asset.title} loading="lazy" decoding="async" onError={(event) => { event.currentTarget.classList.add('is-missing'); }} />;
 }
@@ -230,7 +244,7 @@ function JobProgress({ job, t }: { job: GenerationJob; t: Translate }) {
     <div className="job-progress-top"><span className="job-kind-icon">{job.kind === 'image' ? <Images size={14} /> : <Film size={14} />}</span><strong>{t(job.kind === 'image' ? 'create.imageTitle' : 'create.videoTitle')}</strong><span className={`job-status-dot status-${job.status}`} /></div>
     <p>{job.prompt || t('queue.noPrompt')}</p>
     <div className="job-progress-line"><span style={{ width: `${job.progress}%` }} /></div>
-    <div className="job-progress-meta"><span>{t(`status.${job.status}` as 'status.queued')}</span><span>{new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(job.progress)}%</span></div>
+    <div className="job-progress-meta"><span>{t(`status.${job.status}` as TranslationKey)}</span><span>{new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(job.progress)}%</span></div>
   </div>;
 }
 

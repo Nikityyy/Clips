@@ -45,15 +45,17 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
   labelledBy?: string;
   closeLabel: string;
 }) {
-  const panel = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    const modal = panel.current;
+    if (!modal) return;
+    if (!modal.open) modal.showModal();
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel.current?.focus();
+    const initialFocus = panel.current?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')
+      ?? panel.current?.querySelector<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])');
+    if (initialFocus) initialFocus.focus();
+    else panel.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        onClose();
-      }
       if (event.key !== 'Tab' || !panel.current) return;
       const focusable = [...panel.current.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
         .filter((element) => !element.hasAttribute('hidden'));
@@ -71,13 +73,14 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+      if (modal.open) modal.close();
       previous?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
-    <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={panel} className={`modal-panel ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1}>
+    <dialog ref={panel} className="modal-scrim" aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1} onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      <div className={`modal-panel ${wide ? 'modal-wide' : ''}`}>
         <header className="modal-header">
           <div className="min-width-zero">
             <h2 id={labelledBy ?? 'dialog-title'}>{title}</h2>
@@ -88,7 +91,7 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
         <div className="modal-content">{children}</div>
         {footer ? <footer className="modal-footer">{footer}</footer> : null}
       </div>
-    </div>
+    </dialog>
   );
 }
 

@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowUpRight, Clapperboard, Film, FolderClosed, Images, Settings2, Sparkles, UserRound, Users, X, type LucideIcon,
+  ArrowUpRight, Clapperboard, Film, FolderClosed, Images, ListTodo, Settings2, Sparkles, UserRound, Users, X, type LucideIcon,
 } from 'lucide-react';
-import type { AppSnapshot, Asset, AssetKind, Character, CreateCharacterInput, ErrorCode, GenerationDraft, ImportIssue, JobKind, Locale, ProviderAccount, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
+import type { AppSnapshot, Asset, Character, CreateCharacterInput, ErrorCode, GenerationDraft, GenerationJob, ImportIssue, JobKind, Locale, NativeMenuAction, ProviderAccount, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
 import type { Notice, Translate, View } from '@/lib/app-types';
 import { translate, type TranslationKey } from '@/lib/i18n';
 import { AccountsWorkspace, SettingsWorkspace } from '@/components/Workspace';
 import { CharactersWorkspace } from '@/components/Characters';
 import { LibraryWorkspace } from '@/components/Library';
-import { AssetDetails, CreatorCanvas, CreatorPanel, RecentJobs } from '@/components/Studio';
+import { QueueWorkspace } from '@/components/Queue';
+import { AssetDetails, CreatorCanvas, CreatorPanel } from '@/components/Studio';
 import { Button, IconButton, Modal } from '@/components/ui';
 
 const errorCopy: Record<ErrorCode, TranslationKey> = {
@@ -34,6 +35,7 @@ const navDefinition = [
   { view: 'images', key: 'nav.images', icon: Images },
   { view: 'videos', key: 'nav.videos', icon: Film },
   { view: 'library', key: 'nav.library', icon: FolderClosed },
+  { view: 'queue', key: 'nav.queue', icon: ListTodo },
 ] as const;
 
 export function ClipsApp() {
@@ -80,7 +82,7 @@ export function ClipsApp() {
         if (localeResult.ok) data = { ...data, settings: localeResult.data };
         localStorage.setItem('clips-locale-initialized', 'true');
       }
-      setSnapshot(data);
+      setSnapshot((current) => current && current.revision > data.revision ? current : data);
       if (!localStorage.getItem('clips-onboarding-complete')) setOnboardingStep(0);
     } catch {
       setLoadError(true);
@@ -88,9 +90,10 @@ export function ClipsApp() {
   }, []);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- this effect hydrates the app snapshot from the local SQLite bridge.
     void load();
     if (!window.clips) return;
-    const unsubscribe = window.clips.subscribe((next) => setSnapshot(next));
+    const unsubscribe = window.clips.subscribe((next) => setSnapshot((current) => current && current.revision > next.revision ? current : next));
     return () => unsubscribe();
   }, [load]);
 
@@ -189,6 +192,31 @@ export function ClipsApp() {
     return [] as Asset[];
   }, [announce, handleImportSummary, locale]);
 
+  useEffect(() => {
+    if (!window.clips) return;
+    return window.clips.subscribeMenuAction((action: NativeMenuAction) => {
+      if (action === 'import') {
+        void importFiles();
+        return;
+      }
+      setView(action);
+    });
+  }, [importFiles]);
+
+  const importFlowDownloads = useCallback(async () => {
+    if (!window.clips) return;
+    setPending('flowImport');
+    try {
+      const result = await window.clips.importFlowFiles();
+      if (result.ok) handleImportSummary(result.data);
+      else announce(translate(locale, errorCopy[result.error.code]), 'error');
+    } catch {
+      announce(translate(locale, 'toast.error'), 'error');
+    } finally {
+      setPending('');
+    }
+  }, [announce, handleImportSummary, locale]);
+
   const importDroppedFiles = useCallback(async (files: readonly File[]) => {
     if (!window.clips || files.length === 0) return [] as Asset[];
     setPending('import');
@@ -264,6 +292,34 @@ export function ClipsApp() {
     }
   }, [announce, createMode, drafts, locale, snapshot]);
 
+  const retryGenerationJob = useCallback(async (job: GenerationJob) => {
+    if (!window.clips) return;
+    setPending(`job:${job.id}`);
+    try {
+      const result = await window.clips.retryJob(job.id);
+      if (result.ok) announce(translate(locale, 'queue.retryStarted'));
+      else announce(translate(locale, errorCopy[result.error.code]), 'error');
+    } catch {
+      announce(translate(locale, 'toast.error'), 'error');
+    } finally {
+      setPending('');
+    }
+  }, [announce, locale]);
+
+  const cancelGenerationJob = useCallback(async (job: GenerationJob) => {
+    if (!window.clips) return;
+    setPending(`job:${job.id}`);
+    try {
+      const result = await window.clips.cancelJob(job.id);
+      if (result.ok) announce(translate(locale, 'queue.cancelledBody'));
+      else announce(translate(locale, errorCopy[result.error.code]), 'error');
+    } catch {
+      announce(translate(locale, 'toast.error'), 'error');
+    } finally {
+      setPending('');
+    }
+  }, [announce, locale]);
+
   const saveCharacter = useCallback(async (input: CreateCharacterInput | UpdateCharacterInput, id?: string): Promise<boolean> => {
     if (!window.clips) return false;
     setPending(id ?? 'character');
@@ -333,26 +389,60 @@ export function ClipsApp() {
     if (!result.ok) announce(translate(locale, errorCopy[result.error.code]), 'error');
   }, [announce, locale]);
 
-  const useAsReference = useCallback((asset: Asset) => {
+  const useAsReference = (asset: Asset) => {
     if (asset.kind !== 'image') return;
     setCreateMode('image');
     updateDraft('image', { referenceAssetIds: [...new Set([...(drafts?.image ?? snapshot?.settings.drafts.image)?.referenceAssetIds ?? [], asset.id])].slice(0, 12) });
     setView('create');
     announce(translate(locale, 'create.referencesAdded'));
-  }, [announce, drafts, locale, snapshot, updateDraft]);
+  };
 
   const useAsVideoSource = useCallback((asset: Asset) => {
     if (asset.kind !== 'image') return;
     setCreateMode('video');
     updateDraft('video', { sourceImageId: asset.id });
     setView('create');
-  }, [snapshot, updateDraft]);
+  }, [updateDraft]);
 
   const createWithCharacter = useCallback((character: Character) => {
     setCreateMode('image');
     updateDraft('image', { characterId: character.id, referenceAssetIds: character.referenceAssetIds.slice(0, 12) });
     setView('create');
   }, [updateDraft]);
+
+  const reuseJobSettings = useCallback((job: GenerationJob) => {
+    if (!snapshot) return;
+    const sourceImageId = job.kind === 'video'
+      ? job.inputAssetIds.find((id) => snapshot.assets.some((asset) => asset.id === id && asset.kind === 'image')) ?? null
+      : null;
+    updateDraft(job.kind, {
+      prompt: job.prompt,
+      characterId: job.characterId,
+      referenceAssetIds: job.kind === 'image' ? job.inputAssetIds.slice(0, 12) : [],
+      sourceImageId,
+      modelId: job.modelId,
+      aspectRatio: job.aspectRatio,
+      outputCount: job.outputCount,
+    });
+    setCreateMode(job.kind);
+    setSelectedAssetId(null);
+    setView('create');
+    announce(translate(locale, 'queue.settingsReused'));
+  }, [announce, locale, snapshot, updateDraft]);
+
+  const openDataFolder = useCallback(async () => {
+    if (!window.clips) return;
+    setPending('openDataFolder');
+    try {
+      const result = await window.clips.openDataFolder();
+      if (result.ok) announce(translate(locale, 'settings.folderOpened'));
+      else announce(translate(locale, errorCopy[result.error.code]), 'error');
+    } catch {
+      announce(translate(locale, 'error.storage'), 'error');
+    } finally {
+      setPending('');
+    }
+  }, [announce, locale]);
 
   const openFlow = useCallback(async () => {
     if (!window.clips) return;
@@ -427,12 +517,7 @@ export function ClipsApp() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      const inField = target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
-        event.preventDefault();
-        setView('settings');
-      } else if (event.key === 'Escape' && onboardingStep !== null) {
+      if (event.key === 'Escape' && onboardingStep !== null) {
         event.preventDefault();
         finishOnboarding();
       }
@@ -448,14 +533,20 @@ export function ClipsApp() {
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
   const currentDraft = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
   const selectedAsset = snapshot.assets.find((asset) => asset.id === selectedAssetId && !asset.deletedAt) ?? null;
-  const currentView = view === 'create' ? <CreatorCanvas snapshot={snapshot} mode={createMode} selectedAssetId={selectedAssetId} t={t} onSelect={(asset) => setSelectedAssetId(asset.id)} onOpenLibrary={() => setView('library')} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onInspect={(asset) => setSelectedAssetId(asset.id)} />
-    : view === 'settings' ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={() => setOnboardingStep(0)} t={t} />
-      : view === 'profile' ? <AccountsWorkspace snapshot={snapshot} onOpenFlow={() => void openFlow()} onAddLabel={(label) => void addAccountLabel(label)} onSwitch={(id) => void switchAccount(id)} onRemove={(id) => setRemoveAccount(snapshot.accounts.find((account) => account.id === id) ?? null)} busy={Boolean(pending)} t={t} />
-        : view === 'characters' ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
-          : <LibraryWorkspace snapshot={snapshot} kind={view === 'images' ? 'image' : view === 'videos' ? 'video' : 'all'} locale={locale} t={t} busy={Boolean(pending)} onKind={(kind) => setView(kind === 'all' ? 'library' : kind === 'image' ? 'images' : 'videos')} onImport={() => void importFiles()} onPaste={() => void pasteClipboardImage()} onDrop={(files) => void importDroppedFiles(files)} onReveal={(asset) => void revealAsset(asset)} onDelete={(asset) => void removeAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onAssign={(assetIds, characterId) => void assignAssets(assetIds, characterId)} />;
+  const currentView = view === 'create'
+    ? <CreatorCanvas snapshot={snapshot} mode={createMode} selectedAssetId={selectedAssetId} t={t} onSelect={(asset) => setSelectedAssetId(asset.id)} onOpenLibrary={() => setView('library')} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onInspect={(asset) => setSelectedAssetId(asset.id)} />
+    : view === 'settings'
+      ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={() => setOnboardingStep(0)} onOpenDataFolder={() => void openDataFolder()} busy={Boolean(pending)} t={t} />
+      : view === 'profile'
+        ? <AccountsWorkspace snapshot={snapshot} onOpenFlow={() => void openFlow()} onAddLabel={(label) => void addAccountLabel(label)} onSwitch={(id) => void switchAccount(id)} onRemove={(id) => setRemoveAccount(snapshot.accounts.find((account) => account.id === id) ?? null)} busy={Boolean(pending)} t={t} />
+        : view === 'characters'
+          ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
+          : view === 'queue'
+            ? <QueueWorkspace snapshot={snapshot} busyJobId={pending.startsWith('job:') ? pending.slice(4) : null} t={t} onCreate={() => setView('create')} onRetry={(job) => void retryGenerationJob(job)} onCancel={(job) => void cancelGenerationJob(job)} onReuse={reuseJobSettings} onSelectAsset={(asset) => setSelectedAssetId(asset.id)} />
+            : <LibraryWorkspace snapshot={snapshot} kind={view === 'images' ? 'image' : view === 'videos' ? 'video' : 'all'} locale={locale} t={t} busy={Boolean(pending)} flowReady={activeAccount?.provider === 'google-flow'} hasFlowProfile={snapshot.accounts.some((account) => account.provider === 'google-flow')} onKind={(kind) => setView(kind === 'all' ? 'library' : kind === 'image' ? 'images' : 'videos')} onImport={() => void importFiles()} onImportFlow={() => void importFlowDownloads()} onOpenProfiles={() => setView('profile')} onPaste={() => void pasteClipboardImage()} onDrop={(files) => void importDroppedFiles(files)} onReveal={(asset) => void revealAsset(asset)} onDelete={(asset) => void removeAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} onAssign={(assetIds, characterId) => void assignAssets(assetIds, characterId)} />;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${view === 'create' ? 'has-composer' : ''} ${selectedAsset ? 'has-inspector' : ''}`}>
       <a className="skip-link" href="#workspace-content">{t('accessibility.skipToContent')}</a>
       <nav className="navigation-rail" aria-label={t('accessibility.primaryNavigation')}>
         <button className="brand-mark" type="button" aria-label={t('app.name')} onClick={() => setView('create')}>C</button>
@@ -465,43 +556,29 @@ export function ClipsApp() {
           </button>)}
         </div>
         <div className="rail-footer">
-          <IconButton label={t('nav.profile')} icon={UserRound} active={view === 'profile'} onClick={() => setView('profile')} />
           <IconButton label={t('nav.settings')} icon={Settings2} active={view === 'settings'} onClick={() => setView('settings')} />
         </div>
       </nav>
 
-      <aside className={`phase-one-panel ${view === 'create' ? 'creator-side-panel' : ''}`}>
+      {view === 'create' ? <aside className="phase-one-panel creator-side-panel">
         <div className="phase-panel-brand"><span className="brand-wordmark">{t('app.name')}</span><span className="local-mark">{t('header.sampleMode')}</span></div>
-        {view === 'create' ? <CreatorPanel snapshot={snapshot} mode={createMode} draft={currentDraft} busy={pending === 'generation'} t={t} onMode={setCreateMode} onDraft={(patch) => updateDraft(createMode, patch)} onImport={() => void importReferences()} onPaste={() => void pasteReference()} onDrop={(files) => void dropReferences(files)} onCreate={() => void createGeneration()} onCharacters={() => setView('characters')} onLibrary={() => setView('library')} /> : <>
-          <div className="phase-panel-content">
-            {view === 'settings' ? <><h2>{t('settings.title')}</h2><p>{t('settings.languageHint')}</p><div className="panel-rail-line" /><p>{t('settings.storageLocation')}</p></>
-              : view === 'profile' ? <><h2>{t('account.title')}</h2><p>{t('account.flowBoundary')}</p><div className="panel-rail-line" /><Button variant="quiet" icon={Settings2} onClick={() => setView('settings')}>{t('nav.settings')}</Button></>
-                : view === 'characters' ? <><h2>{t('workspace.sideTitle')}</h2><p>{t('character.emptyBody')}</p><div className="panel-rail-line" /><Button variant="quiet" icon={Sparkles} onClick={() => setView('create')}>{t('character.useForImage')}</Button></>
-                  : <><h2>{t('workspace.sideTitle')}</h2><p>{t('workspace.sideBody')}</p><div className="side-process-list"><span><i />{t('onboarding.characters')}</span><span><i />{t('onboarding.images')}</span><span><i />{t('onboarding.video')}</span></div><div className="panel-rail-line" /><p className="side-footnote">{t('workspace.localPromise')}</p></>}
-          </div>
-          <div className="phase-panel-footer"><span className="footer-key-mark">⌘</span><span>{t('settings.version')}</span></div>
-        </>}
-      </aside>
+        <CreatorPanel snapshot={snapshot} mode={createMode} draft={currentDraft} busy={pending === 'generation'} t={t} onMode={setCreateMode} onDraft={(patch) => updateDraft(createMode, patch)} onImport={() => void importReferences()} onPaste={() => void pasteReference()} onDrop={(files) => void dropReferences(files)} onCreate={() => void createGeneration()} onCharacters={() => setView('characters')} />
+      </aside> : null}
 
       <section className="main-column">
         <header className="workspace-toolbar">
           <div className="workspace-toolbar-title"><span className="toolbar-context-line" /><h1>{t(titleKey)}</h1></div>
           <div className="toolbar-actions">
-            <span className="provider-indicator"><span className="provider-indicator-line" />{activeAccount?.provider === 'mock' ? t('model.localName') : t('account.browserProfile')}</span>
             <button type="button" className={`toolbar-account ${view === 'profile' ? 'is-current' : ''}`} onClick={() => setView('profile')} aria-label={t('nav.profile')}><UserRound size={17} strokeWidth={1.7} /><span>{activeAccount?.provider === 'mock' ? t('account.localTitle') : activeAccount?.label ?? t('common.noAccount')}</span></button>
-            <IconButton label={t('nav.settings')} icon={Settings2} active={view === 'settings'} onClick={() => setView('settings')} />
           </div>
         </header>
         {currentView}
       </section>
 
-      <aside className="context-panel context-work-panel">
-        <div className="context-panel-heading"><span className="context-overline">{selectedAsset ? t('library.inspector') : t('queue.title')}</span><span className="context-heading-line" /></div>
-        {selectedAsset ? <AssetDetails asset={selectedAsset} snapshot={snapshot} t={t} onDelete={(asset) => void removeAsset(asset)} onReveal={(asset) => void revealAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} /> : <>
-          <RecentJobs jobs={snapshot.jobs} t={t} />
-          <div className="context-work-footer"><span className="context-footer-line" /><p>{t('create.localOnly')}</p><Button variant="quiet" icon={ArrowUpRight} busy={pending === 'flow'} onClick={() => void openFlow()}>{t('account.openFlow')}</Button></div>
-        </>}
-      </aside>
+      {selectedAsset ? <aside className="context-panel context-work-panel">
+        <div className="context-panel-heading"><span className="context-overline">{t('library.inspector')}</span><span className="context-heading-line" /></div>
+        <AssetDetails asset={selectedAsset} snapshot={snapshot} t={t} onDelete={(asset) => void removeAsset(asset)} onReveal={(asset) => void revealAsset(asset)} onUseReference={useAsReference} onUseVideoSource={useAsVideoSource} />
+      </aside> : null}
 
       {notice ? <div key={notice.id} className={`toast ${notice.tone === 'error' ? 'toast-error' : ''}`} role={notice.tone === 'error' ? 'alert' : 'status'} aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}>
         <span className="toast-indicator" aria-hidden="true" />

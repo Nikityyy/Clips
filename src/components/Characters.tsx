@@ -18,7 +18,7 @@ export function CharactersWorkspace({ characters, assets, locale, t, busy, onSav
 }) {
   const [editing, setEditing] = useState<Character | 'new' | null>(null);
   const portraits = assets.filter((asset) => !asset.deletedAt && asset.kind === 'image');
-  const ordered = useMemo(() => [...characters].sort((left, right) => left.name.localeCompare(right.name, locale)), [characters, locale]);
+  const ordered = useMemo(() => characters.toSorted((left, right) => left.name.localeCompare(right.name, locale)), [characters, locale]);
 
   return (
     <main className="workspace-content characters-workspace" id="workspace-content" tabIndex={-1}>
@@ -61,7 +61,7 @@ function CharacterForm({ character, portraits, t, busy, onClose, onSave }: {
   return <Modal title={t(character ? 'character.editTitle' : 'character.createTitle')} description={t('character.descriptionHint')} onClose={onClose} closeLabel={t('common.close')} wide footer={<div className="form-modal-actions"><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" icon={character ? Pencil : Plus} busy={busy} disabled={!name.trim()} onClick={() => { const form = document.getElementById('character-form'); if (form instanceof HTMLFormElement) form.requestSubmit(); }}>{t(character ? 'common.save' : 'character.createButton')}</Button></div>}>
     <form id="character-form" className="character-form" onSubmit={submit}>
       <div className="character-form-main">
-        <div><FieldLabel htmlFor="character-name">{t('character.name')}</FieldLabel><input id="character-name" className="text-input" maxLength={80} value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder={t('character.nameHint')} autoFocus /></div>
+        <div><FieldLabel htmlFor="character-name">{t('character.name')}</FieldLabel><input id="character-name" className="text-input" maxLength={80} value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder={t('character.nameHint')} /></div>
         <div><FieldLabel htmlFor="character-description">{t('character.description')}</FieldLabel><textarea id="character-description" className="text-area-control" maxLength={600} rows={3} value={description} onChange={(event) => setDescription(event.currentTarget.value)} placeholder={t('character.descriptionHint')} /></div>
         <div><FieldLabel htmlFor="character-prompt">{t('character.prompt')}</FieldLabel><textarea id="character-prompt" className="text-area-control character-prompt-control" maxLength={6000} rows={5} value={prompt} onChange={(event) => setPrompt(event.currentTarget.value)} placeholder={t('character.promptHint')} /></div>
       </div>

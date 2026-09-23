@@ -1,21 +1,25 @@
 'use client';
 
 import { useMemo, useState, type DragEvent } from 'react';
-import { ArrowDownUp, FileUp, FolderOpen, Images, ListChecks, Plus, Search, X } from 'lucide-react';
-import type { AppSnapshot, Asset, AssetKind, Character } from '@/shared/contracts';
+import { ArrowDownUp, Download, FileUp, FolderOpen, Images, ListChecks, Plus, Search, X } from 'lucide-react';
+import type { AppSnapshot, Asset, AssetKind } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { dateTime, fileSize } from '@/lib/i18n';
 import { AssetDetails } from '@/components/Studio';
 import { Button, EmptyState, IconButton, Modal, SectionHeading } from '@/components/ui';
 
-export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onImport, onPaste, onDrop, onReveal, onDelete, onUseReference, onUseVideoSource, onAssign }: {
+export function LibraryWorkspace({ snapshot, kind, locale, t, busy, flowReady, hasFlowProfile, onKind, onImport, onImportFlow, onOpenProfiles, onPaste, onDrop, onReveal, onDelete, onUseReference, onUseVideoSource, onAssign }: {
   snapshot: AppSnapshot;
   kind: AssetKind | 'all';
   locale: 'en' | 'de';
   t: Translate;
   busy: boolean;
+  flowReady: boolean;
+  hasFlowProfile: boolean;
   onKind: (kind: AssetKind | 'all') => void;
   onImport: () => void;
+  onImportFlow: () => void;
+  onOpenProfiles: () => void;
   onPaste: () => void;
   onDrop: (files: readonly File[]) => void;
   onReveal: (asset: Asset) => void;
@@ -38,7 +42,7 @@ export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onIm
       if (!search) return true;
       const characterNames = characters.filter((character) => asset.provenance.characterIds.includes(character.id)).map((character) => character.name).join(' ');
       return [asset.title, asset.fileName, asset.provenance.prompt ?? '', characterNames].some((value) => value.toLocaleLowerCase(locale).includes(search));
-    }).sort((left, right) => sort === 'name' ? left.title.localeCompare(right.title, locale) : sort === 'oldest' ? left.createdAt.localeCompare(right.createdAt) : right.createdAt.localeCompare(left.createdAt));
+    }).toSorted((left, right) => sort === 'name' ? left.title.localeCompare(right.title, locale) : sort === 'oldest' ? left.createdAt.localeCompare(right.createdAt) : right.createdAt.localeCompare(left.createdAt));
   }, [assets, characters, kind, locale, query, sort]);
 
   const toggleSelect = (id: string) => setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
@@ -49,15 +53,17 @@ export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onIm
   };
 
   return (
-    <main className={`workspace-content library-workspace ${dragging ? 'is-drop-target' : ''}`} id="workspace-content" tabIndex={-1} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={handleDrop}>
-      <SectionHeading title={t(kind === 'all' ? 'nav.library' : kind === 'image' ? 'nav.images' : 'nav.videos')} action={<div className="library-header-actions"><Button variant="secondary" icon={FileUp} disabled={busy} onClick={onImport}>{t('library.import')}</Button><Button variant="quiet" icon={Images} disabled={busy} onClick={onPaste}>{t('library.paste')}</Button></div>}>
+    <main className={`workspace-content library-workspace ${dragging ? 'is-drop-target' : ''}`} id="workspace-content" tabIndex={-1}>
+      <div className="library-drop-region" role="presentation" onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={handleDrop}>
+      <SectionHeading title={t(kind === 'all' ? 'nav.library' : kind === 'image' ? 'nav.images' : 'nav.videos')} action={<div className="library-header-actions"><Button variant="secondary" icon={FileUp} disabled={busy} onClick={onImport}>{t('library.import')}</Button><Button variant="quiet" icon={Images} disabled={busy} onClick={onPaste}>{t('library.paste')}</Button><Button variant="quiet" icon={Download} disabled={busy} aria-label={t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')} title={t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')} onClick={flowReady ? onImportFlow : onOpenProfiles}><span className="flow-import-label-full">{t(flowReady ? 'library.importFlow' : hasFlowProfile ? 'library.chooseFlowProfile' : 'library.setUpFlow')}</span><span className="flow-import-label-compact">{t('library.flowShort')}</span></Button></div>}>
         <p>{t('library.items', { count: new Intl.NumberFormat(locale).format(filtered.length) })}</p>
       </SectionHeading>
 
       <div className="library-toolbar">
-        <div className="library-kind-tabs" role="group" aria-label={t('library.all')}>
+        <fieldset className="library-kind-tabs">
+          <legend className="visually-hidden">{t('library.all')}</legend>
           {(['all', 'image', 'video'] as const).map((filter) => <button type="button" key={filter} className={(kind === filter || (kind === 'all' && filter === 'all')) ? 'is-active' : ''} aria-pressed={kind === filter} onClick={() => onKind(filter)}>{t(filter === 'all' ? 'library.all' : filter === 'image' ? 'library.images' : 'library.videos')}</button>)}
-        </div>
+        </fieldset>
         <label className="library-search"><Search size={16} aria-hidden="true" /><input aria-label={t('common.search')} value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('library.searchPlaceholder')} />{query ? <IconButton label={t('common.clear')} icon={X} size="small" onClick={() => setQuery('')} /> : null}</label>
         <label className="library-sort-control"><ArrowDownUp size={14} aria-hidden="true" /><span className="visually-hidden">{t('library.sort')}</span><select aria-label={t('library.sort')} className="select-control" value={sort} onChange={(event) => setSort(event.currentTarget.value as typeof sort)}><option value="recent">{t('library.sortRecent')}</option><option value="oldest">{t('library.sortOldest')}</option><option value="name">{t('library.sortName')}</option></select></label>
         <Button size="small" variant={selecting ? 'secondary' : 'quiet'} icon={selecting ? ListChecks : Plus} onClick={() => { setSelecting((current) => !current); setSelectedIds([]); }}>{t(selecting ? 'library.finishSelecting' : 'library.select')}</Button>
@@ -73,6 +79,7 @@ export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onIm
 
       {dragging ? <div className="library-drop-overlay" aria-live="polite"><FolderOpen size={24} aria-hidden="true" /><strong>{t('library.dropTitle')}</strong><span>{t('library.dropTitle')}</span></div> : null}
       {inspecting ? <Modal title={t('library.inspector')} onClose={() => setInspecting(null)} closeLabel={t('common.close')} wide><AssetDetails asset={assets.find((asset) => asset.id === inspecting.id) ?? inspecting} snapshot={snapshot} t={t} onDelete={(asset) => { setInspecting(null); onDelete(asset); }} onReveal={onReveal} onUseReference={(asset) => { setInspecting(null); onUseReference(asset); }} onUseVideoSource={(asset) => { setInspecting(null); onUseVideoSource(asset); }} /></Modal> : null}
+      </div>
     </main>
   );
 }

@@ -1,5 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, shell } from 'electron';
-import type { IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, shell } from 'electron';
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from 'electron';
 import { promises as fs, createReadStream, existsSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,15 +27,41 @@ import type {
   JobKind,
   JobStatus,
   Locale,
+  NativeMenuAction,
   ProviderAccount,
   ProviderCapabilities,
   Result,
   Settings,
   SettingsPatch,
+  StorageSummary,
   UpdateCharacterInput,
 } from '../src/shared/contracts';
 
 type Row = Record<string, unknown>;
+type SavedWindowState = { x: number; y: number; width: number; height: number; maximized: boolean };
+type MenuCopy = {
+  app: string; about: string; services: string; hide: string; hideOthers: string; showAll: string; quit: string;
+  file: string; importMedia: string; settings: string; closeWindow: string; edit: string; view: string;
+  create: string; characters: string; images: string; videos: string; library: string; queue: string;
+  fullScreen: string; reload: string; developerTools: string; window: string; minimize: string; zoom: string;
+  front: string; help: string; helpLink: string; addToDictionary: string;
+};
+const MENU_COPY: Record<Locale, MenuCopy> = {
+  en: {
+    app: 'Clips', about: 'About Clips', services: 'Services', hide: 'Hide Clips', hideOthers: 'Hide Others', showAll: 'Show All', quit: 'Quit Clips',
+    file: 'File', importMedia: 'Import media…', settings: 'Settings…', closeWindow: 'Close window', edit: 'Edit', view: 'View',
+    create: 'Create', characters: 'Characters', images: 'Images', videos: 'Videos', library: 'Library', queue: 'Queue',
+    fullScreen: 'Toggle full screen', reload: 'Reload', developerTools: 'Developer tools', window: 'Window', minimize: 'Minimize', zoom: 'Zoom',
+    front: 'Bring all to front', help: 'Help', helpLink: 'Clips help and updates', addToDictionary: 'Add to dictionary',
+  },
+  de: {
+    app: 'Clips', about: 'Über Clips', services: 'Dienste', hide: 'Clips ausblenden', hideOthers: 'Andere ausblenden', showAll: 'Alle einblenden', quit: 'Clips beenden',
+    file: 'Datei', importMedia: 'Medien importieren…', settings: 'Einstellungen…', closeWindow: 'Fenster schließen', edit: 'Bearbeiten', view: 'Ansicht',
+    create: 'Erstellen', characters: 'Figuren', images: 'Bilder', videos: 'Videos', library: 'Bibliothek', queue: 'Warteschlange',
+    fullScreen: 'Vollbild umschalten', reload: 'Neu laden', developerTools: 'Entwicklertools', window: 'Fenster', minimize: 'Minimieren', zoom: 'Zoomen',
+    front: 'Alle Fenster nach vorn', help: 'Hilfe', helpLink: 'Clips Hilfe und Updates', addToDictionary: 'Zum Wörterbuch hinzufügen',
+  },
+};
 type ImportContext = {
   source: AssetSource;
   provider: 'mock' | 'google-flow' | null;
@@ -123,6 +149,11 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null;
 let store: DatabaseStore | null = null;
 let mediaDirectory = '';
+let windowStatePath = '';
+let savedWindowState: SavedWindowState | null = null;
+let windowStateWrite: Promise<void> = Promise.resolve();
+let windowStateTimer: ReturnType<typeof setTimeout> | null = null;
+let menuLocale: Locale = 'en';
 let snapshotRevision = 0;
 const scheduledJobs = new Set<EntityId>();
 
@@ -166,7 +197,10 @@ function nowIso(): string {
 }
 
 function safeTitle(raw: string, fallback: string): string {
-  const cleaned = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 140);
+  const cleaned = [...raw].filter((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint >= 32 && codePoint !== 127;
+  }).join('').trim().slice(0, 140);
   return cleaned || fallback;
 }
 
@@ -374,7 +408,7 @@ function validateCharacter(characterId: EntityId | null | undefined): void {
 function associateCharacter(characterId: EntityId, assetIds: EntityId[]): void {
   const db = mustStore();
   db.run('DELETE FROM character_references WHERE character_id = ?', [characterId]);
-  for (const assetId of [...new Set(assetIds)]) {
+  for (const assetId of new Set(assetIds)) {
     db.run('INSERT OR IGNORE INTO character_references (character_id, asset_id) VALUES (?, ?)', [characterId, assetId]);
   }
 }
@@ -396,12 +430,12 @@ function mimeForFile(bytes: Uint8Array): { kind: AssetKind; mimeType: string; ex
 }
 
 async function sniffFile(filePath: string): Promise<{ kind: AssetKind; mimeType: string; extension: string; sizeBytes: number; width: number | null; height: number | null }> {
-  const handle = await fs.open(filePath, 'r');
+  const fileHandle = await fs.open(filePath, 'r');
   try {
-    const stat = await handle.stat();
+    const stat = await fileHandle.stat();
     if (!stat.isFile()) throw new ClipsError('UNSUPPORTED_MEDIA', 'Choose an image or video file.');
     const header = Buffer.alloc(64);
-    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const { bytesRead } = await fileHandle.read(header, 0, header.length, 0);
     const media = mimeForFile(header.subarray(0, bytesRead));
     if (!media) throw new ClipsError('UNSUPPORTED_MEDIA', 'Clips supports PNG, JPEG, GIF, WebP, AVIF, MP4, MOV, and WebM files.');
     const limit = media.kind === 'image' ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
@@ -410,27 +444,27 @@ async function sniffFile(filePath: string): Promise<{ kind: AssetKind; mimeType:
     const dimensions = await readDimensions(filePath, media.mimeType);
     return { ...media, sizeBytes: stat.size, ...dimensions };
   } finally {
-    await handle.close();
+    await fileHandle.close();
   }
 }
 
 async function readDimensions(filePath: string, mimeType: string): Promise<{ width: number | null; height: number | null }> {
   try {
-    const handle = await fs.open(filePath, 'r');
+    const fileHandle = await fs.open(filePath, 'r');
     try {
       if (mimeType === 'image/png') {
         const buffer = Buffer.alloc(24);
-        await handle.read(buffer, 0, buffer.length, 0);
+        await fileHandle.read(buffer, 0, buffer.length, 0);
         return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
       }
       if (mimeType === 'image/gif') {
         const buffer = Buffer.alloc(10);
-        await handle.read(buffer, 0, buffer.length, 0);
+        await fileHandle.read(buffer, 0, buffer.length, 0);
         return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
       }
       if (mimeType === 'image/webp') {
         const buffer = Buffer.alloc(30);
-        await handle.read(buffer, 0, buffer.length, 0);
+        await fileHandle.read(buffer, 0, buffer.length, 0);
         const chunk = buffer.toString('ascii', 12, 16);
         if (chunk === 'VP8X') return {
           width: 1 + buffer.readUIntLE(24, 3),
@@ -439,7 +473,7 @@ async function readDimensions(filePath: string, mimeType: string): Promise<{ wid
       }
       if (mimeType === 'image/jpeg') {
         const buffer = Buffer.alloc(2 * 1024 * 1024);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
         let offset = 2;
         while (offset + 9 < bytesRead) {
           if (buffer[offset] !== 0xff) { offset += 1; continue; }
@@ -454,7 +488,7 @@ async function readDimensions(filePath: string, mimeType: string): Promise<{ wid
         }
       }
     } finally {
-      await handle.close();
+      await fileHandle.close();
     }
   } catch {
     return { width: null, height: null };
@@ -463,6 +497,7 @@ async function readDimensions(filePath: string, mimeType: string): Promise<{ wid
 }
 
 function mockDirectory(): string {
+  if (process.env.CLIPS_TEST_USER_DATA && process.env.CLIPS_TEST_MEDIA_DIRECTORY) return path.resolve(process.env.CLIPS_TEST_MEDIA_DIRECTORY);
   if (app.isPackaged) return path.join(process.resourcesPath, 'media', 'mock');
   return path.resolve(__dirname, '..', '..', 'public', 'media', 'mock');
 }
@@ -871,14 +906,164 @@ function findJob(id: EntityId): GenerationJob {
   return jobFromRow(row);
 }
 
+function sendMenuAction(action: NativeMenuAction): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.menuAction, action);
+}
+
+function rebuildApplicationMenu(locale: Locale): void {
+  menuLocale = locale;
+  const copy = MENU_COPY[locale];
+  app.setAboutPanelOptions({
+    applicationName: 'Clips',
+    applicationVersion: app.getVersion(),
+    copyright: 'Copyright © 2026 Nikita Berger',
+    website: 'https://github.com/Nikityyy/Clips',
+  });
+  const fileItems: MenuItemConstructorOptions[] = [
+    { id: 'clips-import-media', label: copy.importMedia, accelerator: 'CommandOrControl+O', click: () => sendMenuAction('import') },
+    { type: 'separator' },
+  ];
+  const settingsItem: MenuItemConstructorOptions = {
+    id: 'clips-settings', label: copy.settings, accelerator: 'CommandOrControl+,', click: () => sendMenuAction('settings'),
+  };
+  if (process.platform === 'darwin') {
+    fileItems.push({ role: 'close', label: copy.closeWindow });
+  } else {
+    fileItems.push(settingsItem, { type: 'separator' }, { role: 'quit', label: copy.quit });
+  }
+
+  const viewItems: MenuItemConstructorOptions[] = [
+    { id: 'clips-create', label: copy.create, click: () => sendMenuAction('create') },
+    { id: 'clips-characters', label: copy.characters, click: () => sendMenuAction('characters') },
+    { id: 'clips-images', label: copy.images, click: () => sendMenuAction('images') },
+    { id: 'clips-videos', label: copy.videos, click: () => sendMenuAction('videos') },
+    { id: 'clips-library', label: copy.library, click: () => sendMenuAction('library') },
+    { id: 'clips-queue', label: copy.queue, click: () => sendMenuAction('queue') },
+    { type: 'separator' },
+    { role: 'togglefullscreen', label: copy.fullScreen },
+  ];
+  if (!app.isPackaged) viewItems.push({ type: 'separator' }, { role: 'reload', label: copy.reload }, { role: 'toggleDevTools', label: copy.developerTools });
+
+  const template: MenuItemConstructorOptions[] = [];
+  if (process.platform === 'darwin') {
+    template.push({
+      label: copy.app,
+      submenu: [
+        { role: 'about', label: copy.about },
+        { type: 'separator' },
+        { role: 'services', label: copy.services },
+        { type: 'separator' },
+        { role: 'hide', label: copy.hide },
+        { role: 'hideOthers', label: copy.hideOthers },
+        { role: 'unhide', label: copy.showAll },
+        { type: 'separator' },
+        settingsItem,
+        { type: 'separator' },
+        { role: 'quit', label: copy.quit },
+      ],
+    });
+  }
+  template.push(
+    { label: copy.file, submenu: fileItems },
+    { label: copy.edit, role: 'editMenu' },
+    { label: copy.view, submenu: viewItems },
+    process.platform === 'darwin'
+      ? { role: 'windowMenu', label: copy.window }
+      : { label: copy.window, submenu: [{ role: 'minimize', label: copy.minimize }, { role: 'zoom', label: copy.zoom }, { role: 'close', label: copy.closeWindow }] },
+    { label: copy.help, submenu: [{ label: copy.helpLink, click: () => { void shell.openExternal('https://github.com/Nikityyy/Clips').catch(() => undefined); } }] },
+  );
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function installNativeContextMenu(window: BrowserWindow): void {
+  window.webContents.on('context-menu', (_event, params) => {
+    const items: MenuItemConstructorOptions[] = [];
+    for (const suggestion of params.dictionarySuggestions) {
+      items.push({ label: suggestion, click: () => window.webContents.replaceMisspelling(suggestion) });
+    }
+    if (params.misspelledWord) {
+      if (items.length) items.push({ type: 'separator' });
+      items.push({
+        label: MENU_COPY[menuLocale].addToDictionary,
+        click: () => window.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+    }
+    if (params.isEditable) {
+      if (items.length) items.push({ type: 'separator' });
+      items.push(
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      );
+    } else if (params.selectionText.trim()) {
+      items.push({ role: 'copy' });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window });
+  });
+}
+
+async function loadWindowState(): Promise<SavedWindowState | null> {
+  try {
+    const value: unknown = JSON.parse(await fs.readFile(windowStatePath, 'utf8'));
+    if (!value || typeof value !== 'object') return null;
+    const state = value as Record<string, unknown>;
+    const numbers = [state.x, state.y, state.width, state.height];
+    if (!numbers.every((number) => typeof number === 'number' && Number.isFinite(number))) return null;
+    if ((state.width as number) < 880 || (state.height as number) < 640) return null;
+    return { x: state.x as number, y: state.y as number, width: state.width as number, height: state.height as number, maximized: state.maximized === true };
+  } catch {
+    return null;
+  }
+}
+
+function restoredWindowBounds(state: SavedWindowState | null): { x?: number; y?: number; width: number; height: number } {
+  const display = state
+    ? screen.getDisplayMatching({ x: state.x, y: state.y, width: state.width, height: state.height })
+    : screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  const minWidth = Math.min(880, workArea.width);
+  const minHeight = Math.min(640, workArea.height);
+  const width = Math.max(minWidth, Math.min(state?.width ?? 1440, 4096, workArea.width));
+  const height = Math.max(minHeight, Math.min(state?.height ?? 960, 2160, workArea.height));
+  if (!state) return { width, height };
+  return {
+    x: Math.min(Math.max(state.x, workArea.x - width + 120), workArea.x + workArea.width - 120),
+    y: Math.min(Math.max(state.y, workArea.y), workArea.y + workArea.height - 80),
+    width,
+    height,
+  };
+}
+
+function saveWindowState(window: BrowserWindow): Promise<void> {
+  if (!windowStatePath || window.isDestroyed()) return windowStateWrite;
+  const bounds = window.getNormalBounds();
+  const data: SavedWindowState = { ...bounds, maximized: window.isMaximized() };
+  windowStateWrite = windowStateWrite.catch(() => undefined).then(() => fs.writeFile(windowStatePath, JSON.stringify(data), 'utf8'));
+  return windowStateWrite.catch((error: unknown) => { console.error('[Clips] Window preferences could not be saved:', error instanceof Error ? error.name : 'unknown'); });
+}
+
+function scheduleWindowStateSave(window: BrowserWindow): void {
+  if (windowStateTimer) clearTimeout(windowStateTimer);
+  windowStateTimer = setTimeout(() => {
+    windowStateTimer = null;
+    void saveWindowState(window);
+  }, 220);
+}
+
 function createWindow(): void {
   const preloadCandidates = [path.join(__dirname, 'preload.js'), path.join(__dirname, 'preload.cjs')];
   const preload = preloadCandidates.find((candidate) => existsSync(candidate)) ?? preloadCandidates[0];
+  const bounds = restoredWindowBounds(savedWindowState);
   mainWindow = new BrowserWindow({
-    width: 1536,
-    height: 1024,
-    minWidth: 880,
-    minHeight: 640,
+    ...bounds,
+    minWidth: Math.min(880, bounds.width),
+    minHeight: Math.min(640, bounds.height),
     backgroundColor: '#171719',
     show: false,
     title: 'Clips',
@@ -891,7 +1076,22 @@ function createWindow(): void {
       spellcheck: true,
     },
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    if (savedWindowState?.maximized) mainWindow?.maximize();
+    mainWindow?.show();
+  });
+  const window = mainWindow;
+  installNativeContextMenu(window);
+  const persistBounds = () => scheduleWindowStateSave(window);
+  window.on('resize', persistBounds);
+  window.on('move', persistBounds);
+  window.on('maximize', persistBounds);
+  window.on('unmaximize', persistBounds);
+  window.on('close', () => {
+    if (windowStateTimer) clearTimeout(windowStateTimer);
+    windowStateTimer = null;
+    void saveWindowState(window);
+  });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!trustedRendererUrl(url)) event.preventDefault();
@@ -968,8 +1168,41 @@ function installMediaProtocol(): void {
   });
 }
 
+async function readStorageSummary(): Promise<StorageSummary> {
+  const directory = app.getPath('userData');
+  let mediaFiles = 0;
+  let mediaBytes = 0;
+  try {
+    for (const entry of await fs.readdir(mediaDirectory, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const stat = await fs.stat(path.join(mediaDirectory, entry.name));
+      if (!stat.isFile()) continue;
+      mediaFiles += 1;
+      mediaBytes += stat.size;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new ClipsError('STORAGE_ERROR', 'Clips could not read the size of its local media library.');
+    }
+  }
+  let databaseBytes = 0;
+  try {
+    databaseBytes = (await fs.stat(path.join(directory, 'clips.sqlite'))).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new ClipsError('STORAGE_ERROR', 'Clips could not read the size of its local database.');
+    }
+  }
+  return { directory, mediaFiles, mediaBytes, databaseBytes };
+}
+
 function registerIpc(): void {
   handle(IPC_CHANNELS.getSnapshot, TRUSTED_NO_INPUT, () => getSnapshot());
+  handle(IPC_CHANNELS.getStorageSummary, TRUSTED_NO_INPUT, readStorageSummary);
+  handle(IPC_CHANNELS.openDataFolder, TRUSTED_NO_INPUT, async () => {
+    const error = await shell.openPath(app.getPath('userData'));
+    if (error) throw new ClipsError('STORAGE_ERROR', 'Clips could not open its local data folder.');
+  });
 
   handle(IPC_CHANNELS.importFiles, TRUSTED_NO_INPUT, async () => {
     const selection = await dialog.showOpenDialog(mainWindow!, {
@@ -997,7 +1230,7 @@ function registerIpc(): void {
       source: 'flow-handoff',
       provider: 'google-flow',
       accountId: settings.activeAccountId,
-      prompt: input.prompt ?? settings.drafts.image.prompt ?? null,
+      prompt: input.prompt ?? null,
       modelId: null,
       sourceAssetIds: input.sourceAssetIds ?? [],
       characterId: input.characterId ?? null,
@@ -1060,6 +1293,7 @@ function registerIpc(): void {
     settings.locale = locale;
     mustStore().setSetting('app', settings);
     await flushAndPublish();
+    rebuildApplicationMenu(locale);
     return settings;
   });
 
@@ -1083,6 +1317,7 @@ function registerIpc(): void {
     };
     mustStore().setSetting('app', settings);
     await flushAndPublish();
+    if (patch.locale) rebuildApplicationMenu(patch.locale);
     return settings;
   });
 
@@ -1277,9 +1512,12 @@ async function initialize(): Promise<void> {
   app.setName('Clips');
   const userData = app.getPath('userData');
   mediaDirectory = path.join(userData, 'media');
+  windowStatePath = path.join(userData, 'window-state.json');
   await fs.mkdir(mediaDirectory, { recursive: true });
   store = await DatabaseStore.open(path.join(userData, 'clips.sqlite'));
   await seedLocalLibrary();
+  savedWindowState = await loadWindowState();
+  rebuildApplicationMenu(activeSettings().locale);
   installMediaProtocol();
   registerIpc();
   createWindow();
@@ -1293,6 +1531,11 @@ if (!app.isPackaged && process.env.CLIPS_TEST_USER_DATA) {
   const testDataDirectory = path.resolve(process.env.CLIPS_TEST_USER_DATA);
   app.setPath('userData', testDataDirectory);
   app.setPath('sessionData', path.join(testDataDirectory, 'session'));
+}
+else if (app.isPackaged && process.env.CLIPS_TEST_PACKAGED_USER_DATA) {
+  const packagedTestDataDirectory = path.resolve(process.env.CLIPS_TEST_PACKAGED_USER_DATA);
+  app.setPath('userData', packagedTestDataDirectory);
+  app.setPath('sessionData', path.join(packagedTestDataDirectory, 'session'));
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -1317,7 +1560,7 @@ app.on('before-quit', (event) => {
   closingStore = true;
   const closing = store;
   store = null;
-  void closing.close().finally(() => app.quit());
+  void Promise.all([closing.close(), windowStateWrite]).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

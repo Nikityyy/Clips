@@ -3,7 +3,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // but cannot require ordinary local modules at runtime.
 const IPC_CHANNELS = {
   snapshotUpdated: 'clips:snapshot',
+  menuAction: 'clips:menu-action',
   getSnapshot: 'clips:get-snapshot',
+  getStorageSummary: 'clips:get-storage-summary',
+  openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
   importFlowFiles: 'clips:import-flow-files',
   importPaths: 'clips:import-paths',
@@ -43,12 +46,14 @@ import type {
   ImportSummary,
   JobKind,
   Locale,
+  NativeMenuAction,
   Result,
   ProviderAccount,
   Character,
   UndoDeleteSummary,
   Settings,
   SettingsPatch,
+  StorageSummary,
   UpdateCharacterInput,
 } from '../src/shared/contracts';
 
@@ -57,10 +62,17 @@ const invoke = <T>(channel: string, payload?: unknown): Promise<Result<T>> =>
 
 const api: ClipsApi = {
   getSnapshot: () => invoke<AppSnapshot>(IPC_CHANNELS.getSnapshot),
+  getStorageSummary: () => invoke<StorageSummary>(IPC_CHANNELS.getStorageSummary),
+  openDataFolder: () => invoke<void>(IPC_CHANNELS.openDataFolder),
   subscribe(listener) {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => listener(snapshot);
     ipcRenderer.on(IPC_CHANNELS.snapshotUpdated, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.snapshotUpdated, handler);
+  },
+  subscribeMenuAction(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, action: NativeMenuAction) => listener(action);
+    ipcRenderer.on(IPC_CHANNELS.menuAction, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.menuAction, handler);
   },
 
   importFiles: () => invoke<ImportSummary>(IPC_CHANNELS.importFiles),
