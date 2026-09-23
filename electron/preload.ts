@@ -26,6 +26,9 @@ const IPC_CHANNELS = {
   retryJob: 'clips:retry-job',
   cancelJob: 'clips:cancel-job',
   connectFlow: 'clips:connect-flow',
+  addFlowAccount: 'clips:add-flow-account',
+  selectFlowAccount: 'clips:select-flow-account',
+  logoutFlow: 'clips:logout-flow',
   revealAsset: 'clips:reveal-asset',
 } as const;
 import type {
@@ -99,6 +102,9 @@ const api: ClipsApi = {
   cancelJob: (jobId: EntityId) => invoke<GenerationJob>(IPC_CHANNELS.cancelJob, { id: jobId }),
 
   connectFlow: () => invoke<ProviderCapabilities>(IPC_CHANNELS.connectFlow),
+  addFlowAccount: () => invoke<ProviderCapabilities>(IPC_CHANNELS.addFlowAccount),
+  selectFlowAccount: (accountId: EntityId) => invoke<ProviderCapabilities>(IPC_CHANNELS.selectFlowAccount, { accountId }),
+  logoutFlow: () => invoke<void>(IPC_CHANNELS.logoutFlow),
   revealAsset: (assetId: EntityId) => invoke<void>(IPC_CHANNELS.revealAsset, { id: assetId }),
 };
 

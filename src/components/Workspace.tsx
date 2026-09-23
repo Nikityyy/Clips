@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FolderOpen, Info, UserRound } from 'lucide-react';
+import { Check, FolderOpen, Info, LogOut, Plus, UserRound } from 'lucide-react';
 import type { AppSnapshot, SettingsPatch, StorageSummary } from '@/shared/contracts';
 import type { Translate } from '@/lib/app-types';
 import { Button, MenuSelect } from '@/components/ui';
@@ -77,15 +77,19 @@ function RatioOptions({ value, options, label, onChange }: { value: string; opti
   return <div className="ratio-options settings-ratios" role="group" aria-label={label}>{options.map((ratio) => <button key={ratio} type="button" className={value === ratio ? 'is-selected' : ''} aria-pressed={value === ratio} onClick={() => onChange(ratio)}>{ratio}</button>)}</div>;
 }
 
-export function AccountsWorkspace({ snapshot, onConnectFlow, busy, t }: {
+export function AccountsWorkspace({ snapshot, onConnectFlow, onAddAccount, onSelectAccount, onLogout, busy, t }: {
   snapshot: AppSnapshot;
   onConnectFlow: () => void;
+  onAddAccount: () => void;
+  onSelectAccount: (accountId: string) => void;
+  onLogout: () => void;
   busy: boolean;
   t: Translate;
 }) {
   const status = snapshot.capabilities.status;
   const isLocal = snapshot.capabilities.provider === 'mock';
-  const account = snapshot.accounts.find((item) => item.provider === 'google-flow');
+  const accounts = snapshot.accounts.filter((item) => item.provider === 'google-flow');
+  const account = accounts.find((item) => item.id === snapshot.settings.activeAccountId);
   const statusKey = status === 'ready' ? 'account.statusReady'
     : status === 'checking' ? 'account.statusChecking'
       : status === 'unavailable' ? 'account.statusUnavailable'
@@ -100,8 +104,24 @@ export function AccountsWorkspace({ snapshot, onConnectFlow, busy, t }: {
           <p>{t(isLocal ? 'account.localBody' : status === 'unavailable' ? 'account.installBody' : status === 'ready' ? 'account.connectedBody' : 'account.flowBody')}</p>
         </div>
         <span className={`account-status-mark status-${status}`} aria-hidden="true" />
-        {!isLocal ? <Button variant="primary" busy={busy} disabled={busy || status === 'checking'} onClick={onConnectFlow}>{t(status === 'ready' ? 'account.reconnect' : status === 'unavailable' ? 'account.checkInstall' : 'account.connect')}</Button> : null}
+        {!isLocal ? <Button variant="primary" busy={busy && status !== 'ready'} disabled={busy || status === 'checking'} onClick={onConnectFlow}>{t(status === 'ready' ? 'account.reconnect' : status === 'unavailable' ? 'account.checkInstall' : 'account.connect')}</Button> : null}
       </section>
+      {!isLocal ? <section className="flow-saved-accounts" aria-labelledby="saved-accounts-title">
+        <div className="flow-saved-accounts-heading"><div><h3 id="saved-accounts-title">{t('account.savedAccounts')}</h3><p>{t('account.savedAccountsHint')}</p></div></div>
+        {accounts.map((item) => {
+          const active = item.id === snapshot.settings.activeAccountId;
+          const connected = active ? status === 'ready' : item.connection === 'connected';
+          return <div className={`flow-account-row${active ? ' is-active' : ''}`} key={item.id}>
+            <span className={`flow-account-row-mark${connected ? ' is-connected' : ''}`} aria-hidden="true"><UserRound size={17} /></span>
+            <div className="flow-account-row-copy"><strong>{item.label}</strong><span>{t(connected ? 'account.statusReady' : active ? statusKey : 'account.statusNeedsLogin')}</span></div>
+            <div className="flow-account-row-actions">
+              <Button size="small" variant={active ? 'secondary' : 'quiet'} icon={active ? Check : undefined} disabled={busy || active} onClick={() => onSelectAccount(item.id)}>{t(active ? 'account.activeAccount' : 'account.useAccount')}</Button>
+              {active && status === 'ready' ? <Button size="small" icon={LogOut} disabled={busy} onClick={onLogout}>{t('account.logout')}</Button> : null}
+            </div>
+          </div>;
+        })}
+        <Button icon={Plus} disabled={busy} onClick={onAddAccount}>{t('account.addAccount')}</Button>
+      </section> : null}
       {status === 'unavailable' && !isLocal ? <section className="gflow-install-panel">
         <h3>{t('account.installTitle')}</h3>
         <p>{snapshot.capabilities.detail}</p>

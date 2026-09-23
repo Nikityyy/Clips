@@ -848,6 +848,24 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .account-status-mark { width: 9px; height: 9px; border-radius: 50%; background: #77766f; }
 .account-status-mark.status-ready { background: #c8c6bd; box-shadow: 0 0 0 5px rgb(200 198 189 / .09); }
 .account-status-mark.status-checking { animation: status-pulse 1.3s ease-in-out infinite; }
+.flow-saved-accounts { display: grid; max-width: 900px; gap: 10px; margin-top: 26px; }
+.flow-saved-accounts-heading { margin-bottom: 2px; }
+.flow-saved-accounts-heading h3 { margin: 0; font-size: 15px; font-weight: 520; }
+.flow-saved-accounts-heading p { margin: 5px 0 7px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.flow-account-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 13px 15px; border: 1px solid var(--line-soft); background: #171716; }
+.flow-account-row.is-active { border-color: #69685f; background: #1c1c1a; }
+.flow-account-row-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #474640; border-radius: 50%; color: var(--muted); }
+.flow-account-row-mark.is-connected { border-color: #77766f; color: var(--bone); }
+.flow-account-row-copy { display: grid; min-width: 0; gap: 4px; }
+.flow-account-row-copy strong { overflow: hidden; color: var(--bone); font-size: 13px; font-weight: 520; text-overflow: ellipsis; }
+.flow-account-row-copy span { color: var(--muted); font-size: 11px; }
+.flow-account-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.startup-account-options { display: grid; gap: 7px; }
+.startup-account-option { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid var(--line-soft); background: #171716; color: var(--bone); text-align: start; cursor: pointer; }
+.startup-account-option.is-active { border-color: #77766f; background: #1d1d1b; }
+.startup-account-option:disabled { cursor: default; }
+.startup-account-option span { overflow: hidden; font-size: 12px; text-overflow: ellipsis; }
+.startup-account-option small { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .gflow-install-panel { max-width: 900px; margin-top: 20px; padding: 20px 22px; border: 1px solid var(--line-soft); background: #171716; }
 .gflow-install-panel h3 { margin: 0 0 6px; font-size: 15px; font-weight: 500; }
 .gflow-install-panel > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
@@ -919,6 +937,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   .picker-footer > div { width: 100%; }
   .picker-footer .button { flex: 1; }
   .flow-account-card { grid-template-columns: minmax(0, 1fr); }
+  .flow-account-row { grid-template-columns: auto minmax(0, 1fr); }
+  .flow-account-row-actions { grid-column: 1 / -1; justify-content: stretch; }
+  .flow-account-row-actions > .button { flex: 1; justify-content: center; }
   .flow-account-mark { width: 42px; height: 42px; }
   .flow-account-card .account-status-mark { grid-column: auto; grid-row: auto; margin: 0; }
   .flow-account-card > .button { grid-column: auto; grid-row: auto; justify-self: stretch; }

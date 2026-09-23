@@ -36,6 +36,9 @@ export const IPC_CHANNELS = {
   retryJob: 'clips:retry-job',
   cancelJob: 'clips:cancel-job',
   connectFlow: 'clips:connect-flow',
+  addFlowAccount: 'clips:add-flow-account',
+  selectFlowAccount: 'clips:select-flow-account',
+  logoutFlow: 'clips:logout-flow',
   revealAsset: 'clips:reveal-asset',
 } as const;
 
@@ -295,6 +298,9 @@ export interface ClipsApi {
   cancelJob(jobId: EntityId): Promise<Result<GenerationJob>>;
 
   connectFlow(): Promise<Result<ProviderCapabilities>>;
+  addFlowAccount(): Promise<Result<ProviderCapabilities>>;
+  selectFlowAccount(accountId: EntityId): Promise<Result<ProviderCapabilities>>;
+  logoutFlow(): Promise<Result<void>>;
   revealAsset(assetId: EntityId): Promise<Result<void>>;
 }
 
@@ -307,10 +313,12 @@ const modelIdSchema = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_.-]+$/);
 export const IpcSchema = {
   id: entityId,
   mode: z.enum(['image', 'video']),
+  selectFlowAccount: z.object({ accountId: entityId }).strict(),
   locale: localeSchema,
   importPaths: z.object({ paths: z.array(z.string().min(1).max(4096)).max(20) }).strict(),
   saveDraft: z.object({
     mode: z.enum(['image', 'video']),
+  selectFlowAccount: z.object({ accountId: entityId }).strict(),
     draft: z.object({
       prompt: z.string().max(20000),
       characterId: entityId.nullable(),

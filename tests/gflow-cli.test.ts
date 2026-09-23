@@ -1,5 +1,8 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseFlowCatalog, parseFlowProfiles, parseGenerationPaths, UV_BUILDS } from '../electron/gflow-cli';
+import { GOOGLE_LOGIN_ENTRY_URL, parseFlowCatalog, parseFlowProfiles, parseGenerationPaths, patchGoogleLoginSources, UV_BUILDS } from '../electron/gflow-cli';
 
 const catalog = JSON.stringify({
   image: {
@@ -16,6 +19,30 @@ const catalog = JSON.stringify({
 });
 
 describe('gflow-cli adapter data', () => {
+
+  it('starts sign-in at Google and redirects back to the Flow editor', () => {
+    const login = new URL(GOOGLE_LOGIN_ENTRY_URL);
+    expect(login.hostname).toBe('accounts.google.com');
+    expect(login.searchParams.get('continue')).toBe('https://labs.google/fx/tools/flow?hl=en');
+  });
+
+  it('patches both pinned gflow browser strategies to open the direct Google sign-in page', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'clips-gflow-login-'));
+    const auth = path.join(root, 'package-hash', 'gflow_cli', 'auth');
+    try {
+      await mkdir(auth, { recursive: true });
+      for (const file of ['internal_chromium.py', 'real_chrome.py']) {
+        await writeFile(path.join(auth, file), 'GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"\r\n', 'utf8');
+      }
+      await expect(patchGoogleLoginSources(root)).resolves.toBe(2);
+      for (const file of ['internal_chromium.py', 'real_chrome.py']) {
+        await expect(readFile(path.join(auth, file), 'utf8')).resolves.toContain(`GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('looks for Windows uv.exe at the root of Astral’s official zip archive', () => {
     expect(UV_BUILDS['win32-x64'].executable).toBe('uv.exe');
   });

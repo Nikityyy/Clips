@@ -480,6 +480,56 @@ export function ClipsApp() {
     }
   }, [announce, locale]);
 
+  const addFlowAccount = useCallback(async () => {
+    if (!window.clips) return;
+    setPending('add-flow-account');
+    setGateError('');
+    try {
+      const result = await window.clips.addFlowAccount();
+      if (result.ok) {
+        await load();
+        announce(translate(locale, 'account.connectedToast'));
+      } else {
+        setGateError(result.error.message);
+        announce(result.error.message, 'error');
+      }
+    } catch {
+      setGateError(translate(locale, 'startup.loginError'));
+    } finally {
+      setPending('');
+    }
+  }, [announce, load, locale]);
+
+  const selectFlowAccount = useCallback(async (accountId: string) => {
+    if (!window.clips) return;
+    setPending('select-flow-account');
+    setGateError('');
+    try {
+      const result = await window.clips.selectFlowAccount(accountId);
+      if (result.ok) await load();
+      else setGateError(result.error.message);
+    } catch {
+      setGateError(translate(locale, 'error.provider'));
+    } finally {
+      setPending('');
+    }
+  }, [load, locale]);
+
+  const logoutFlow = useCallback(async () => {
+    if (!window.clips) return;
+    setPending('logout-flow');
+    setGateError('');
+    try {
+      const result = await window.clips.logoutFlow();
+      if (result.ok) await load();
+      else setGateError(result.error.message);
+    } catch {
+      setGateError(translate(locale, 'error.provider'));
+    } finally {
+      setPending('');
+    }
+  }, [load, locale]);
+
   const finishWelcome = useCallback(() => {
     localStorage.setItem('clips-welcome-complete', 'true');
     setWelcomeStep(null);
@@ -510,9 +560,9 @@ export function ClipsApp() {
 
   if (welcomeStep !== null) return <Onboarding step={welcomeStep} locale={locale} onStep={setWelcomeStep} onDone={finishWelcome} onLocale={(value) => void setLocale(value)} t={t} />;
   if (!snapshot.flowNoticeAccepted) return <TermsGate checked={flowNoticeChecked} error={gateError} busy={pending === 'accept-notice'} onChecked={setFlowNoticeChecked} onAccept={() => void acceptFlowNotice()} t={t} />;
-  if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} busy={pending === 'flow'} onConnect={() => void connectFlow()} t={t} />;
+  if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate snapshot={snapshot} status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} busy={Boolean(pending)} onConnect={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} t={t} />;
   if (snapshot.capabilities.provider === 'google-flow' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <Onboarding step={0} locale={locale} onStep={setOnboardingStep} onDone={finishOnboarding} onLocale={(value) => void setLocale(value)} t={t} />;
-  if (snapshot.capabilities.provider === 'mock' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <FlowSignInGate status="mock-ready" detail={snapshot.capabilities.detail} error={gateError} busy={false} onConnect={() => { setOnboardingStep(0); }} t={t} />;
+  if (snapshot.capabilities.provider === 'mock' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <FlowSignInGate snapshot={snapshot} status="mock-ready" detail={snapshot.capabilities.detail} error={gateError} busy={false} onConnect={() => { setOnboardingStep(0); }} onAddAccount={() => undefined} onSelectAccount={() => undefined} t={t} />;
 
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
   const currentDraft = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
@@ -522,7 +572,7 @@ export function ClipsApp() {
     : view === 'settings'
       ? <SettingsWorkspace snapshot={snapshot} onLocale={(value) => void setLocale(value)} onSettings={(patch) => void updateSettings(patch)} onReplayTutorial={() => setOnboardingStep(0)} onOpenDataFolder={() => void openDataFolder()} busy={Boolean(pending)} t={t} />
       : view === 'profile'
-        ? <AccountsWorkspace snapshot={snapshot} onConnectFlow={() => void connectFlow()} busy={pending === 'flow'} t={t} />
+        ? <AccountsWorkspace snapshot={snapshot} onConnectFlow={() => void connectFlow()} onAddAccount={() => void addFlowAccount()} onSelectAccount={(id) => void selectFlowAccount(id)} onLogout={() => void logoutFlow()} busy={Boolean(pending)} t={t} />
         : view === 'characters'
           ? <CharactersWorkspace characters={snapshot.characters} assets={snapshot.assets} locale={locale} t={t} busy={Boolean(pending)} onSave={saveCharacter} onDelete={(character) => setDeleteCharacter(character)} onCreateImage={createWithCharacter} />
           : view === 'queue'
@@ -596,12 +646,30 @@ function TermsGate({ checked, error, busy, onChecked, onAccept, t }: {
   </Modal></div>;
 }
 
-function FlowSignInGate({ status, detail, error, busy, onConnect, t }: {
-  status: AppSnapshot['capabilities']['status']; detail: string; error: string; busy: boolean; onConnect: () => void; t: Translate;
+function FlowSignInGate({ snapshot, status, detail, error, busy, onConnect, onAddAccount, onSelectAccount, t }: {
+  snapshot: AppSnapshot;
+  status: AppSnapshot['capabilities']['status'];
+  detail: string;
+  error: string;
+  busy: boolean;
+  onConnect: () => void;
+  onAddAccount: () => void;
+  onSelectAccount: (accountId: string) => void;
+  t: Translate;
 }) {
   const local = status === 'mock-ready';
-  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy} onClick={onConnect}>{t(local ? 'startup.localAction' : 'startup.loginAction')}</Button></div>}>
-    <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{t(local ? 'account.localTitle' : 'account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
+  const accounts = snapshot.accounts.filter((item) => item.provider === 'google-flow');
+  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy && status !== 'checking'} disabled={busy || status === 'checking'} onClick={onConnect}>{t(local ? 'startup.localAction' : 'startup.loginAction')}</Button></div>}>
+    <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{local ? t('account.localTitle') : snapshot.accounts.find((item) => item.id === snapshot.settings.activeAccountId)?.label ?? t('account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
+    {!local && accounts.length > 1 ? <div className="startup-account-options" aria-label={t('account.savedAccounts')}>
+      {accounts.map((account) => {
+        const active = account.id === snapshot.settings.activeAccountId;
+        return <button type="button" className={`startup-account-option${active ? ' is-active' : ''}`} key={account.id} disabled={busy || active} onClick={() => onSelectAccount(account.id)}>
+          <span>{account.label}</span><small>{t(active ? 'account.activeAccount' : account.connection === 'connected' ? 'account.statusReady' : 'account.statusNeedsLogin')}</small>
+        </button>;
+      })}
+    </div> : null}
+    {!local && accounts.length > 1 ? <Button size="small" icon={UserRound} disabled={busy} onClick={onAddAccount}>{t('account.addAccount')}</Button> : null}
     {error ? <p className="startup-error" role="alert">{error}</p> : null}
   </Modal></div>;
 }

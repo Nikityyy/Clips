@@ -35,8 +35,38 @@ const DEFAULT_PROFILE = 'clips';
 const GFLOW_VERSION = runtimeSpec.gflowVersion;
 const UV_VERSION = runtimeSpec.uvVersion;
 const FLOW_PYTHON = runtimeSpec.pythonVersion;
+const FLOW_EDITOR_URL = 'https://labs.google/fx/tools/flow?hl=en';
+export const GOOGLE_LOGIN_ENTRY_URL = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(FLOW_EDITOR_URL)}`;
 const UV_RELEASES = 'https://releases.astral.sh/github/uv/releases/download';
 export const UV_BUILDS = runtimeSpec.builds as Record<string, { archive: string; sha256: string; executable: string }>;
+
+export async function patchGoogleLoginSources(cache: string): Promise<number> {
+  const modules = ['internal_chromium.py', 'real_chrome.py'];
+  let patched = 0;
+  for (const entry of await fs.readdir(cache, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory()) continue;
+    for (const packagePath of [
+      path.join(cache, entry.name, 'gflow_cli', 'auth'),
+      path.join(cache, entry.name, 'Lib', 'site-packages', 'gflow_cli', 'auth'),
+    ]) {
+      for (const authModule of modules) {
+        const file = path.join(packagePath, authModule);
+        let source: string;
+        try { source = await fs.readFile(file, 'utf8'); } catch { continue; }
+        const updated = source.replace(/^GEMINI_URL = "https:\/\/labs\.google\/fx\/tools\/flow\?hl=en"\r?$/m, `GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`);
+        if (updated !== source) {
+          await fs.writeFile(file, updated);
+          await fs.rm(path.join(packagePath, '__pycache__'), { recursive: true, force: true });
+          patched += 1;
+        } else if (source.includes(`GEMINI_URL = "${GOOGLE_LOGIN_ENTRY_URL}"`)) {
+          patched += 1;
+        }
+      }
+    }
+  }
+  if (patched < modules.length) throw new Error('The pinned gflow-cli login modules could not be updated to open Google sign-in directly.');
+  return patched;
+}
 
 function parseRatioList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -147,9 +177,20 @@ export class GFlowCli {
     return parseFlowProfiles(output.stdout);
   }
 
-  async login(): Promise<void> {
+  async login(profileName = DEFAULT_PROFILE): Promise<void> {
     await this.setupBrowser();
-    await this.run(['auth', 'login', '--profile', this.profileName, '--browser', 'auto'], 15 * 60_000);
+    await this.run(['auth', '--help'], 90_000);
+    await this.patchGoogleLoginEntryPoint();
+    await this.run(['auth', 'login', '--profile', profileName, '--browser', 'auto'], 15 * 60_000);
+  }
+
+  async logout(profileName = DEFAULT_PROFILE): Promise<void> {
+    await this.run(['auth', 'logout', '--profile', profileName, '--yes'], 90_000);
+  }
+
+  private async patchGoogleLoginEntryPoint(): Promise<void> {
+    const cache = path.join(this.userDataPath(), 'runtime', 'uv', 'cache', 'archive-v0');
+    await patchGoogleLoginSources(cache);
   }
 
   private async setupBrowser(): Promise<void> {
@@ -157,8 +198,8 @@ export class GFlowCli {
     await this.runCommand(setup.executable, ['tool', 'run', '--python', FLOW_PYTHON, '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium', '--no-shell'], setup.env, 18 * 60_000);
   }
 
-  async verifySession(): Promise<string> {
-    const output = await this.run(['auth', 'status', '--profile', this.profileName], 90_000);
+  async verifySession(profileName = DEFAULT_PROFILE): Promise<string> {
+    const output = await this.run(['auth', 'status', '--profile', profileName], 90_000);
     // gflow-cli uses Rich, which may wrap status text in ANSI styles when piped.
     // oxlint-disable-next-line no-control-regex -- Strip terminal color sequences before parsing the stable status line.
     const clean = output.stdout.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
