@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFlowCatalog, parseFlowProfiles, parseGenerationPaths } from '../electron/gflow-cli';
+import { parseFlowCatalog, parseFlowProfiles, parseGenerationPaths, UV_BUILDS } from '../electron/gflow-cli';
 
 const catalog = JSON.stringify({
   image: {
@@ -16,6 +16,10 @@ const catalog = JSON.stringify({
 });
 
 describe('gflow-cli adapter data', () => {
+  it('looks for Windows uv.exe at the root of Astral’s official zip archive', () => {
+    expect(UV_BUILDS['win32-x64'].executable).toBe('uv.exe');
+  });
+
   it('uses the connector catalog for models, aliases, reference caps, and aspect options', () => {
     expect(parseFlowCatalog(catalog)).toEqual({
       models: [

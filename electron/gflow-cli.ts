@@ -34,8 +34,8 @@ const DEFAULT_PROFILE = 'clips';
 const GFLOW_VERSION = '0.79.1';
 const UV_VERSION = '0.12.18';
 const UV_RELEASES = 'https://releases.astral.sh/github/uv/releases/download';
-const UV_BUILDS: Record<string, { archive: string; sha256: string; executable: string }> = {
-  'win32-x64': { archive: 'uv-x86_64-pc-windows-msvc.zip', sha256: 'cae6a3bc25239f83dffb467a4b180508d9da23986c04639ebfa44e43e6a84bff', executable: 'uv-x86_64-pc-windows-msvc/uv.exe' },
+export const UV_BUILDS: Record<string, { archive: string; sha256: string; executable: string }> = {
+  'win32-x64': { archive: 'uv-x86_64-pc-windows-msvc.zip', sha256: 'cae6a3bc25239f83dffb467a4b180508d9da23986c04639ebfa44e43e6a84bff', executable: 'uv.exe' },
   'darwin-x64': { archive: 'uv-x86_64-apple-darwin.tar.gz', sha256: '2e4108f5395397c8bc5d43bf83d3bdbb2d0e92b90d0efa607756be704905fa33', executable: 'uv-x86_64-apple-darwin/uv' },
   'darwin-arm64': { archive: 'uv-aarch64-apple-darwin.tar.gz', sha256: 'cf40e0c6a202190ccd9e0406dcfdd5b2d6668a9a5c779b17948963df32aafe5b', executable: 'uv-aarch64-apple-darwin/uv' },
   'linux-x64': { archive: 'uv-x86_64-unknown-linux-gnu.tar.gz', sha256: '89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16', executable: 'uv-x86_64-unknown-linux-gnu/uv' },
