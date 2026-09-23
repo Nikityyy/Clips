@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Clapperboard, FolderClosed, Images, ListTodo, Settings2, Sparkles, UserRound, Users, X, type LucideIcon,
+  Clapperboard, ExternalLink, FolderClosed, Images, ListTodo, Settings2, ShieldCheck, Sparkles, UserRound, Users, X, type LucideIcon,
 } from 'lucide-react';
 import type { AppSnapshot, Asset, Character, CreateCharacterInput, ErrorCode, GenerationDraft, GenerationJob, ImportIssue, JobKind, Locale, NativeMenuAction, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
 import type { Notice, Translate, View } from '@/lib/app-types';
@@ -12,7 +12,7 @@ import { CharactersWorkspace } from '@/components/Characters';
 import { LibraryWorkspace } from '@/components/Library';
 import { QueueWorkspace } from '@/components/Queue';
 import { AssetDetails, CreatorCanvas, CreatorPanel } from '@/components/Studio';
-import { Button, IconButton, MenuSelect, Modal } from '@/components/ui';
+import { Button, IconButton, MenuSelect, Modal, TooltipLayer } from '@/components/ui';
 
 const errorCopy: Record<ErrorCode, TranslationKey> = {
   INVALID_INPUT: 'error.invalid',
@@ -40,7 +40,10 @@ export function ClipsApp() {
   const [loadError, setLoadError] = useState(false);
   const [view, setView] = useState<View>('create');
   const [libraryKind, setLibraryKind] = useState<'all' | 'image' | 'video'>('all');
+  const [welcomeStep, setWelcomeStep] = useState<number | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
+  const [flowNoticeChecked, setFlowNoticeChecked] = useState(false);
+  const [gateError, setGateError] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState('');
   const [deleteCharacter, setDeleteCharacter] = useState<Character | null>(null);
@@ -80,7 +83,7 @@ export function ClipsApp() {
         localStorage.setItem('clips-locale-initialized', 'true');
       }
       setSnapshot((current) => current && current.revision > data.revision ? current : data);
-      if (!localStorage.getItem('clips-onboarding-complete')) setOnboardingStep(0);
+      if (!localStorage.getItem('clips-welcome-complete')) setWelcomeStep(0);
     } catch {
       setLoadError(true);
     }
@@ -446,26 +449,47 @@ export function ClipsApp() {
     }
   }, [announce, locale]);
 
+  const acceptFlowNotice = useCallback(async () => {
+    if (!window.clips || !flowNoticeChecked) return;
+    setPending('accept-notice');
+    setGateError('');
+    try {
+      const result = await window.clips.acceptFlowNotice();
+      if (!result.ok) setGateError(result.error.message);
+      else await load();
+    } catch { setGateError(t('error.storage')); }
+    finally { setPending(''); }
+  }, [flowNoticeChecked, load, t]);
+
   const connectFlow = useCallback(async () => {
     if (!window.clips) return;
     setPending('flow');
+    setGateError('');
     try {
       const result = await window.clips.connectFlow();
       if (result.ok) {
         setSnapshot((current) => current ? { ...current, capabilities: result.data } : current);
         announce(translate(locale, 'account.connectedToast'));
-      } else announce(result.error.message, 'error');
+        if (!localStorage.getItem('clips-onboarding-complete')) setOnboardingStep(0);
+      } else { setGateError(result.error.message); announce(result.error.message, 'error'); }
     } catch {
+      setGateError(translate(locale, 'startup.loginError'));
       announce(translate(locale, 'error.provider'), 'error');
     } finally {
       setPending('');
     }
   }, [announce, locale]);
 
+  const finishWelcome = useCallback(() => {
+    localStorage.setItem('clips-welcome-complete', 'true');
+    setWelcomeStep(null);
+  }, []);
+
   const finishOnboarding = useCallback(() => {
     localStorage.setItem('clips-onboarding-complete', 'true');
     setOnboardingStep(null);
   }, []);
+
 
 
   useEffect(() => {
@@ -484,6 +508,11 @@ export function ClipsApp() {
 
   if (!snapshot) return <div className="boot-screen"><div className="boot-mark"><Clapperboard size={30} strokeWidth={2.4} aria-hidden="true" /></div><p>{loadError ? t('app.unavailable') : t('app.loading')}</p>{loadError ? <Button onClick={() => void load()}>{t('app.retry')}</Button> : <span className="loading-rule" aria-hidden="true" />}</div>;
 
+  if (welcomeStep !== null) return <Onboarding step={welcomeStep} locale={locale} onStep={setWelcomeStep} onDone={finishWelcome} onLocale={(value) => void setLocale(value)} t={t} />;
+  if (!snapshot.flowNoticeAccepted) return <TermsGate checked={flowNoticeChecked} error={gateError} busy={pending === 'accept-notice'} onChecked={setFlowNoticeChecked} onAccept={() => void acceptFlowNotice()} t={t} />;
+  if (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') return <FlowSignInGate status={snapshot.capabilities.status} detail={snapshot.capabilities.detail} error={gateError} busy={pending === 'flow'} onConnect={() => void connectFlow()} t={t} />;
+  if (snapshot.capabilities.provider === 'mock' && onboardingStep === null && typeof window !== 'undefined' && !localStorage.getItem('clips-onboarding-complete')) return <FlowSignInGate status="mock-ready" detail={snapshot.capabilities.detail} error={gateError} busy={false} onConnect={() => { setOnboardingStep(0); }} t={t} />;
+
   const activeAccount = snapshot.accounts.find((account) => account.id === snapshot.settings.activeAccountId) ?? null;
   const currentDraft = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
   const selectedAsset = snapshot.assets.find((asset) => asset.id === selectedAssetId && !asset.deletedAt) ?? null;
@@ -501,6 +530,7 @@ export function ClipsApp() {
 
   return (
     <div className={`app-shell ${view === 'create' ? 'has-composer' : ''} ${selectedAsset ? 'has-inspector' : ''}`}>
+      <TooltipLayer />
       <a className="skip-link" href="#workspace-content">{t('accessibility.skipToContent')}</a>
       <nav className="navigation-rail" aria-label={t('accessibility.primaryNavigation')}>
         <button className="brand-mark" type="button" aria-label={t('app.name')} onClick={() => setView('create')}><Clapperboard size={26} strokeWidth={2.4} aria-hidden="true" /></button>
@@ -547,6 +577,32 @@ export function ClipsApp() {
       {importIssues ? <Modal title={t('modal.importIssues')} description={t('modal.importIssuesHint')} onClose={() => setImportIssues(null)} closeLabel={t('common.close')}><ul className="import-issues-list">{importIssues.map((issue, index) => <li key={`${issue.name}-${index}`}><strong>{issue.name}</strong><span>{issue.message}</span></li>)}</ul><div className="import-issues-footer"><Button variant="primary" onClick={() => setImportIssues(null)}>{t('common.done')}</Button></div></Modal> : null}
     </div>
   );
+}
+
+function TermsGate({ checked, error, busy, onChecked, onAccept, t }: {
+  checked: boolean; error: string; busy: boolean; onChecked: (checked: boolean) => void; onAccept: () => void; t: Translate;
+}) {
+  const legalLinks = [
+    ['google-terms', 'startup.googleTerms'],
+    ['flow-terms', 'startup.flowTerms'],
+    ['gflow-disclaimer', 'startup.connectorDisclaimer'],
+  ] as const;
+  return <div className="startup-screen"><Modal title={t('startup.termsTitle')} description={t('startup.termsBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate" footer={<div className="startup-footer"><span>{t('startup.required')}</span><Button variant="primary" icon={ShieldCheck} busy={busy} disabled={!checked} onClick={onAccept}>{t('startup.continueToLogin')}</Button></div>}>
+    <div className="startup-legal-links">{legalLinks.map(([link, key]) => <button type="button" key={link} onClick={() => void window.clips?.openLegalLink(link)}>{t(key)}<ExternalLink size={13} aria-hidden="true" /></button>)}</div>
+    <label className="startup-consent"><input type="checkbox" checked={checked} onChange={(event) => onChecked(event.currentTarget.checked)} /><span>{t('startup.termsCheckbox')}</span></label>
+    <p className="startup-legal-limit">{t('startup.legalNote')}</p>
+    {error ? <p className="startup-error" role="alert">{error}</p> : null}
+  </Modal></div>;
+}
+
+function FlowSignInGate({ status, detail, error, busy, onConnect, t }: {
+  status: AppSnapshot['capabilities']['status']; detail: string; error: string; busy: boolean; onConnect: () => void; t: Translate;
+}) {
+  const local = status === 'mock-ready';
+  return <div className="startup-screen"><Modal title={t('startup.loginTitle')} description={t('startup.loginBody')} onClose={() => undefined} closeLabel={t('common.close')} dismissible={false} wide className="startup-gate startup-login" footer={<div className="startup-footer"><span>{busy ? t('startup.loginBusy') : t('startup.loginPrivacy')}</span><Button variant="primary" busy={busy} onClick={onConnect}>{t(local ? 'startup.localAction' : 'startup.loginAction')}</Button></div>}>
+    <div className="startup-login-card"><span className="startup-login-icon"><UserRound size={24} strokeWidth={1.7} aria-hidden="true" /></span><div><strong>{t(local ? 'account.localTitle' : 'account.flowTitle')}</strong><p>{local ? detail : status === 'unavailable' ? detail || t('startup.loginError') : t('startup.loginPrivacy')}</p></div></div>
+    {error ? <p className="startup-error" role="alert">{error}</p> : null}
+  </Modal></div>;
 }
 
 function Onboarding({ step, locale, onStep, onDone, onLocale, t }: {

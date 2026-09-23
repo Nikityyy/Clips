@@ -61,8 +61,7 @@ try {
   await page.getByRole('dialog').waitFor();
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => document.fonts.check('500 14px "Manrope Variable"')), true, 'the app should load the bundled Manrope variable font');
-  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
-  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
+  assert.equal(await page.locator('.onboarding-visual').count(), 1, 'the first-run introduction should open with its animated visual preview');
   assert.equal(await page.title(), 'Clips');
 
   const onboarding = page.getByRole('dialog');
@@ -82,7 +81,28 @@ try {
     assert.ok(Math.abs(bounds.height - introBounds[0].height) <= 1, 'onboarding height should stay fixed between steps');
   }
   await onboarding.getByRole('button', { name: 'Open the studio' }).click();
+  const terms = page.getByRole('dialog');
+  await terms.getByRole('heading', { name: 'Before you connect Google Flow' }).waitFor();
+  assert.equal(await terms.getByRole('button', { name: 'Continue to Google sign-in' }).isDisabled(), true, 'the required notice must be acknowledged before proceeding');
+  await page.keyboard.press('Escape');
+  assert.equal(await terms.isVisible(), true, 'the required terms gate cannot be dismissed');
+  const prematureConnect = await page.evaluate(() => window.clips.connectFlow());
+  assert.equal(prematureConnect.ok, false, 'Flow IPC must reject sign-in before notice acceptance');
+  assert.equal(prematureConnect.error.code, 'PERMISSION_DENIED');
+  await terms.getByRole('checkbox').check();
+  await terms.getByRole('button', { name: 'Continue to Google sign-in' }).click();
+  const signIn = page.getByRole('dialog');
+  await signIn.getByRole('heading', { name: 'Connect your Google account' }).waitFor();
+  await signIn.getByRole('button', { name: 'Continue with local test mode' }).click();
+  const tutorial = page.getByRole('dialog');
+  await tutorial.getByRole('heading', { name: /Make images and clips/ }).waitFor();
+  for (let step = 0; step < 4; step += 1) {
+    const next = tutorial.getByRole('button', { name: step === 3 ? 'Open the studio' : 'Continue' });
+    await next.click();
+  }
   await page.getByRole('heading', { name: 'Creation studio' }).waitFor();
+  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
+  assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
 
   const initial = await page.evaluate(async () => window.clips.getSnapshot());
   assert.ok(initial.ok);
@@ -97,6 +117,13 @@ try {
   assert.equal(await page.locator('.rail-nav-item[aria-label="Images"], .rail-nav-item[aria-label="Videos"]').count(), 0, 'images and videos should live under the single Library destination');
   assert.equal(await page.locator('.rail-nav-item[aria-label="Library"]').getAttribute('title'), null, 'the navigation should use custom tooltips instead of native browser tooltips');
   assert.ok(await page.locator('.rail-nav-item[aria-label="Library"]').getAttribute('data-tooltip'));
+  const libraryButton = page.locator('.rail-nav-item[aria-label="Library"]');
+  await libraryButton.hover();
+  const tooltip = page.locator('#clips-tooltip');
+  await tooltip.waitFor({ state: 'visible' });
+  const tooltipBounds = await tooltip.boundingBox();
+  const viewportBounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  assert.ok(tooltipBounds && tooltipBounds.x >= 0 && tooltipBounds.y >= 0 && tooltipBounds.x + tooltipBounds.width <= viewportBounds.width && tooltipBounds.y + tooltipBounds.height <= viewportBounds.height, 'custom tooltips should remain fully within the app window');
   assert.equal(await page.locator('.context-panel').count(), 0, 'the empty inspector should not take space until an asset is selected');
   const nativeMenu = await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.map((item) => item.label) ?? []);
   if (process.platform === 'win32') assert.deepEqual(nativeMenu, [], 'Windows should use the clean title bar without a File/Edit/View menu');

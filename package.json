@@ -35,18 +35,13 @@
     "generate:icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
-    "@fontsource-variable/manrope": "^5.3.0",
-    "@tailwindcss/postcss": "^4.3.3",
-    "lucide-react": "^1.47.0",
-    "next": "^16.3.6",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
     "sql.js": "^1.14.2",
-    "tailwindcss": "^4.3.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -54,9 +49,14 @@
     "concurrently": "^10.0.5",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
+    "lucide-react": "^1.47.0",
+    "next": "^16.3.6",
     "oxlint": "^1.85.0",
     "playwright": "1.63.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "sharp": "^0.35.4",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
     "wait-on": "^9.1.0"
@@ -69,7 +69,36 @@
     "files": [
       "out/**/*",
       "out-electron/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/sql.js/LICENSE",
+      "node_modules/sql.js/package.json",
+      "node_modules/sql.js/dist/sql-wasm.js",
+      "node_modules/sql.js/dist/sql-wasm.wasm",
+      "node_modules/zod/LICENSE",
+      "node_modules/zod/package.json",
+      "node_modules/zod/index.cjs",
+      "node_modules/zod/v4/**/*.cjs",
+      "!node_modules/sql.js/.devcontainer/**",
+      "!node_modules/sql.js/.eslintrc.js",
+      "!node_modules/sql.js/.jsdoc.config.json",
+      "!node_modules/sql.js/.nojekyll",
+      "!node_modules/sql.js/AUTHORS",
+      "!node_modules/sql.js/CONTRIBUTING.md",
+      "!node_modules/sql.js/documentation_index.md",
+      "!node_modules/sql.js/eslint.config.cjs",
+      "!node_modules/sql.js/logo.svg",
+      "!node_modules/sql.js/dist/*debug*",
+      "!node_modules/sql.js/dist/*browser*",
+      "!node_modules/sql.js/dist/sql-asm*",
+      "!node_modules/sql.js/dist/sqljs-*",
+      "!node_modules/sql.js/dist/worker-*",
+      "!node_modules/zod/**/*.d.cts",
+      "!node_modules/zod/**/*.d.ts",
+      "!node_modules/zod/**/*.ts",
+      "!node_modules/zod/**/*.md",
+      "!node_modules/zod/**/tests/**",
+      "!node_modules/zod/**/benchmarks/**",
+      "!node_modules/zod/src/**"
     ],
     "extraResources": [
       {
@@ -91,6 +120,14 @@
       {
         "from": "assets/clips.png",
         "to": "app-icon.png"
+      },
+      {
+        "from": "public/licenses/MIT-gflow-cli.txt",
+        "to": "licenses/MIT-gflow-cli.txt"
+      },
+      {
+        "from": "public/licenses/MIT-uv.txt",
+        "to": "licenses/MIT-uv.txt"
       }
     ],
     "directories": {
@@ -112,7 +149,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "license": "build/license_en.txt"
     },
     "linux": {
       "icon": "assets/clips.png",
@@ -120,6 +158,10 @@
       "target": [
         "AppImage"
       ]
-    }
+    },
+    "electronLanguages": [
+      "en-US",
+      "de"
+    ]
   }
 }

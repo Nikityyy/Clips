@@ -5,6 +5,8 @@ const IPC_CHANNELS = {
   snapshotUpdated: 'clips:snapshot',
   menuAction: 'clips:menu-action',
   getSnapshot: 'clips:get-snapshot',
+  acceptFlowNotice: 'clips:accept-flow-notice',
+  openLegalLink: 'clips:open-legal-link',
   getStorageSummary: 'clips:get-storage-summary',
   openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
@@ -56,6 +58,8 @@ const invoke = <T>(channel: string, payload?: unknown): Promise<Result<T>> =>
 
 const api: ClipsApi = {
   getSnapshot: () => invoke<AppSnapshot>(IPC_CHANNELS.getSnapshot),
+  acceptFlowNotice: () => invoke<void>(IPC_CHANNELS.acceptFlowNotice),
+  openLegalLink: (link) => invoke<void>(IPC_CHANNELS.openLegalLink, { link }),
   getStorageSummary: () => invoke<StorageSummary>(IPC_CHANNELS.getStorageSummary),
   openDataFolder: () => invoke<void>(IPC_CHANNELS.openDataFolder),
   subscribe(listener) {

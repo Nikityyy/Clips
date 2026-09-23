@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, LoaderCircle, X, Check, type LucideIcon } from 'lucide-react';
 
@@ -36,7 +36,7 @@ export function IconButton({ label, icon: Icon, active, size = 'normal', classNa
   );
 }
 
-export function Modal({ title, description, onClose, children, footer, wide = false, labelledBy, closeLabel, className = '', transitionKey }: {
+export function Modal({ title, description, onClose, children, footer, wide = false, labelledBy, closeLabel, className = '', transitionKey, dismissible = true }: {
   title: string;
   description?: string;
   onClose: () => void;
@@ -47,6 +47,7 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
   closeLabel: string;
   className?: string;
   transitionKey?: string | number;
+  dismissible?: boolean;
 }) {
   const panel = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -82,20 +83,110 @@ export function Modal({ title, description, onClose, children, footer, wide = fa
   }, []);
 
   return (
-    <dialog ref={panel} className="modal-scrim" aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1} onCancel={(event) => { event.preventDefault(); onClose(); }}>
+    <dialog ref={panel} className="modal-scrim" aria-modal="true" aria-labelledby={labelledBy ?? 'dialog-title'} tabIndex={-1} onCancel={(event) => { event.preventDefault(); if (dismissible) onClose(); }}>
       <div className={`modal-panel ${wide ? 'modal-wide' : ''} ${className}`}>
         <header className="modal-header">
           <div key={transitionKey} className="min-width-zero">
             <h2 id={labelledBy ?? 'dialog-title'}>{title}</h2>
             {description ? <p>{description}</p> : null}
           </div>
-          <IconButton label={closeLabel} icon={X} onClick={onClose} />
+          {dismissible ? <IconButton label={closeLabel} icon={X} onClick={onClose} /> : null}
         </header>
         <div className="modal-content">{children}</div>
         {footer ? <footer className="modal-footer">{footer}</footer> : null}
       </div>
     </dialog>
   );
+}
+
+export function TooltipLayer() {
+  const [tip, setTip] = useState<{ target: HTMLElement; label: string; x: number; y: number; side: 'top' | 'bottom' | 'left' | 'right' } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const targetRef = useRef<HTMLElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const place = useCallback((target: HTMLElement, label: string) => {
+    const bounds = target.getBoundingClientRect();
+    const margin = 8;
+    const likelyWidth = Math.min(250, window.innerWidth - margin * 2);
+    const isRail = target.classList.contains('rail-nav-item');
+    let side: 'top' | 'bottom' | 'left' | 'right' = 'top';
+    let x = bounds.left + bounds.width / 2;
+    let y = bounds.top - 9;
+    if (isRail && bounds.right + likelyWidth + 18 <= window.innerWidth - margin) {
+      side = 'right'; x = bounds.right + 10; y = bounds.top + bounds.height / 2;
+    } else if (isRail && bounds.left - likelyWidth - 18 >= margin) {
+      side = 'left'; x = bounds.left - 10; y = bounds.top + bounds.height / 2;
+    } else if (bounds.top < 48) {
+      side = 'bottom'; y = bounds.bottom + 9;
+    }
+    setTip({ target, label, x, y, side });
+    target.setAttribute('aria-describedby', 'clips-tooltip');
+  }, []);
+  const dismiss = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (targetRef.current) targetRef.current.removeAttribute('aria-describedby');
+    targetRef.current = null;
+    setTip(null);
+  }, []);
+  useEffect(() => {
+    const findTarget = (element: EventTarget | null) => element instanceof Element ? element.closest<HTMLElement>('[data-tooltip]') : null;
+    const schedule = (target: HTMLElement | null) => {
+      if (timer.current) clearTimeout(timer.current);
+      if (!target?.dataset.tooltip) { dismiss(); return; }
+      if (targetRef.current !== target) {
+        if (targetRef.current) targetRef.current.removeAttribute('aria-describedby');
+        targetRef.current = target;
+        setTip(null);
+      }
+      const label = target.dataset.tooltip;
+      timer.current = setTimeout(() => { if (targetRef.current === target) place(target, label); }, 140);
+    };
+    const onPointerOver = (event: PointerEvent) => schedule(findTarget(event.target));
+    const onPointerOut = (event: PointerEvent) => {
+      const current = findTarget(event.target);
+      const next = findTarget(event.relatedTarget);
+      if (current && current !== next && document.activeElement !== current) dismiss();
+    };
+    const onFocusIn = (event: FocusEvent) => schedule(findTarget(event.target));
+    const onFocusOut = (event: FocusEvent) => {
+      const current = findTarget(event.target);
+      if (current && document.activeElement !== current) dismiss();
+    };
+    const reposition = () => { if (targetRef.current?.dataset.tooltip) place(targetRef.current, targetRef.current.dataset.tooltip); };
+    document.addEventListener('pointerover', onPointerOver);
+    document.addEventListener('pointerout', onPointerOut);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      document.removeEventListener('pointerover', onPointerOver);
+      document.removeEventListener('pointerout', onPointerOut);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [dismiss, place]);
+  useLayoutEffect(() => {
+    if (!tip || !tooltipRef.current) return;
+    const bounds = tooltipRef.current.getBoundingClientRect();
+    const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), Math.max(low, high));
+    let x = tip.x;
+    let y = tip.y;
+    if (tip.side === 'right' && x + bounds.width > window.innerWidth - 8) { x = tip.target.getBoundingClientRect().left - 10; setTip({ ...tip, x, side: 'left' }); return; }
+    if (tip.side === 'left' && x - bounds.width < 8) { x = tip.target.getBoundingClientRect().right + 10; setTip({ ...tip, x, side: 'right' }); return; }
+    if (tip.side === 'top' && y - bounds.height < 8) { y = tip.target.getBoundingClientRect().bottom + 9; setTip({ ...tip, y, side: 'bottom' }); return; }
+    const left = tip.side === 'right' ? x : tip.side === 'left' ? x - bounds.width : clamp(x - bounds.width / 2, 8, window.innerWidth - bounds.width - 8);
+    const top = tip.side === 'top' ? y - bounds.height : tip.side === 'bottom' ? y : clamp(y - bounds.height / 2, 8, window.innerHeight - bounds.height - 8);
+    tooltipRef.current.style.left = `${clamp(left, 8, window.innerWidth - bounds.width - 8)}px`;
+    tooltipRef.current.style.top = `${clamp(top, 8, window.innerHeight - bounds.height - 8)}px`;
+    tooltipRef.current.dataset.ready = 'true';
+  }, [tip]);
+  if (!tip || typeof document === 'undefined') return null;
+  return createPortal(<div ref={tooltipRef} id="clips-tooltip" role="tooltip" className="clips-tooltip">{tip.label}</div>, document.body);
 }
 
 export interface MenuSelectOption {

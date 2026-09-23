@@ -105,7 +105,6 @@ export function AccountsWorkspace({ snapshot, onConnectFlow, busy, t }: {
       {status === 'unavailable' && !isLocal ? <section className="gflow-install-panel">
         <h3>{t('account.installTitle')}</h3>
         <p>{snapshot.capabilities.detail}</p>
-        <pre><code>uv tool install gflow-cli{`\n`}uv tool run --from gflow-cli playwright install chromium</code></pre>
         <p className="account-boundary-note"><Info size={15} aria-hidden="true" />{t('account.installFootnote')}</p>
       </section> : null}
       <section className="account-privacy-note"><Info size={16} aria-hidden="true" /><p>{t(isLocal ? 'account.testProviderNote' : 'account.flowBoundary')}</p></section>

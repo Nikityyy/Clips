@@ -1,4 +1,8 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 export type FlowJobKind = 'image' | 'video';
@@ -27,6 +31,16 @@ export interface FlowProfile {
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_PROFILE = 'clips';
+const GFLOW_VERSION = '0.79.1';
+const UV_VERSION = '0.12.18';
+const UV_RELEASES = 'https://releases.astral.sh/github/uv/releases/download';
+const UV_BUILDS: Record<string, { archive: string; sha256: string; executable: string }> = {
+  'win32-x64': { archive: 'uv-x86_64-pc-windows-msvc.zip', sha256: 'cae6a3bc25239f83dffb467a4b180508d9da23986c04639ebfa44e43e6a84bff', executable: 'uv-x86_64-pc-windows-msvc/uv.exe' },
+  'darwin-x64': { archive: 'uv-x86_64-apple-darwin.tar.gz', sha256: '2e4108f5395397c8bc5d43bf83d3bdbb2d0e92b90d0efa607756be704905fa33', executable: 'uv-x86_64-apple-darwin/uv' },
+  'darwin-arm64': { archive: 'uv-aarch64-apple-darwin.tar.gz', sha256: 'cf40e0c6a202190ccd9e0406dcfdd5b2d6668a9a5c779b17948963df32aafe5b', executable: 'uv-aarch64-apple-darwin/uv' },
+  'linux-x64': { archive: 'uv-x86_64-unknown-linux-gnu.tar.gz', sha256: '89eadd7c76fc063887959510d5ba0ab1264dfd5f1143b925ddb73021a40acf16', executable: 'uv-x86_64-unknown-linux-gnu/uv' },
+  'linux-arm64': { archive: 'uv-aarch64-unknown-linux-gnu.tar.gz', sha256: 'afb6291f3f0a6b4521fc67b947822506c41dde5b60d2189dd8f3695b2ac8c9e7', executable: 'uv-aarch64-unknown-linux-gnu/uv' },
+};
 
 function parseRatioList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -111,24 +125,31 @@ export function parseGenerationPaths(json: string, kind: FlowJobKind): string[] 
 
 export class GFlowCli {
   readonly profileName = DEFAULT_PROFILE;
-  private readonly executable: string;
+  private readonly userDataPath: () => string;
+  private setupPromise: Promise<{ executable: string; env: NodeJS.ProcessEnv }> | null = null;
 
-  constructor(executable = process.env.GFLOW_CLI_PATH || (process.platform === 'win32' ? 'gflow.exe' : 'gflow')) {
-    this.executable = executable;
+  constructor(userDataPath: () => string = () => path.join(os.homedir(), '.clips')) {
+    this.userDataPath = userDataPath;
   }
 
   async catalog(): Promise<FlowCatalog> {
-    const output = await this.run(['models', '--json'], 30_000);
+    const output = await this.run(['models', '--json'], 12 * 60_000);
     return parseFlowCatalog(output.stdout);
   }
 
   async profiles(): Promise<FlowProfile[]> {
-    const output = await this.run(['auth', 'list', '--json'], 30_000);
+    const output = await this.run(['auth', 'list', '--json'], 12 * 60_000);
     return parseFlowProfiles(output.stdout);
   }
 
   async login(): Promise<void> {
-    await this.run(['auth', 'login', '--profile', this.profileName, '--browser', 'chrome'], 15 * 60_000);
+    await this.setupBrowser();
+    await this.run(['auth', 'login', '--profile', this.profileName, '--browser', 'auto'], 15 * 60_000);
+  }
+
+  private async setupBrowser(): Promise<void> {
+    const setup = await this.runtime();
+    await this.runCommand(setup.executable, ['tool', 'run', '--from', `gflow-cli==${GFLOW_VERSION}`, 'playwright', 'install', 'chromium'], setup.env, 18 * 60_000);
   }
 
   async verifySession(): Promise<string> {
@@ -146,16 +167,76 @@ export class GFlowCli {
     return output.stdout;
   }
 
-  private run(args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+  private async run(args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+    const setup = await this.runtime();
+    return this.runCommand(setup.executable, ['tool', 'run', '--from', `gflow-cli==${GFLOW_VERSION}`, 'gflow', ...args], setup.env, timeoutMs);
+  }
+
+  private async runtime(): Promise<{ executable: string; env: NodeJS.ProcessEnv }> {
+    if (!this.setupPromise) {
+      this.setupPromise = this.prepareRuntime().catch((error: unknown) => {
+        this.setupPromise = null;
+        throw error;
+      });
+    }
+    return this.setupPromise;
+  }
+
+  private async prepareRuntime(): Promise<{ executable: string; env: NodeJS.ProcessEnv }> {
+    const root = path.join(this.userDataPath(), 'runtime');
+    const existingUv = process.env.UV_PATH;
+    const uvPath = existingUv || await this.ensureUv(root);
+    const env = {
+      ...process.env,
+      GFLOW_CLI_PROFILE: this.profileName,
+      GFLOW_CLI_HOME: path.join(root, 'gflow-home'),
+      UV_TOOL_DIR: path.join(root, 'uv', 'tools'),
+      UV_CACHE_DIR: path.join(root, 'uv', 'cache'),
+      UV_PYTHON_INSTALL_DIR: path.join(root, 'uv', 'python'),
+      PLAYWRIGHT_BROWSERS_PATH: path.join(root, 'browsers'),
+    };
+    await Promise.all([env.GFLOW_CLI_HOME, env.UV_TOOL_DIR, env.UV_CACHE_DIR, env.UV_PYTHON_INSTALL_DIR, env.PLAYWRIGHT_BROWSERS_PATH].map((directory) => fs.mkdir(directory, { recursive: true })));
+    return { executable: uvPath, env };
+  }
+
+  private async ensureUv(root: string): Promise<string> {
+    const key = `${process.platform}-${process.arch}`;
+    const build = UV_BUILDS[key];
+    if (!build) throw new Error(`Google Flow sign-in is not supported on ${key}.`);
+    const binDirectory = path.join(root, 'bin');
+    const target = path.join(binDirectory, process.platform === 'win32' ? 'uv.exe' : 'uv');
+    try { if ((await fs.stat(target)).isFile()) return target; } catch { /* first use */ }
+    await fs.mkdir(binDirectory, { recursive: true });
+    const temporary = await fs.mkdtemp(path.join(root, 'uv-setup-'));
+    const archive = path.join(temporary, build.archive);
+    const extracted = path.join(temporary, 'extracted');
+    try {
+      const response = await fetch(`${UV_RELEASES}/${UV_VERSION}/${build.archive}`, { signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) throw new Error(`Could not download the Clips Flow runtime (HTTP ${response.status}). Check your connection and try again.`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > 32 * 1024 * 1024) throw new Error('The Clips Flow runtime download was larger than expected.');
+      const actual = createHash('sha256').update(bytes).digest('hex');
+      if (actual !== build.sha256) throw new Error('The Clips Flow runtime failed its integrity check. Please retry later.');
+      await fs.writeFile(archive, bytes);
+      await fs.mkdir(extracted, { recursive: true });
+      await this.runCommand('tar', ['-xf', archive, '-C', extracted], process.env, 60_000);
+      const source = path.join(extracted, build.executable);
+      await fs.access(source);
+      const staging = `${target}.new`;
+      await fs.copyFile(source, staging);
+      if (process.platform !== 'win32') await fs.chmod(staging, 0o755);
+      await fs.rename(staging, target);
+      return target;
+    } finally {
+      await fs.rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private runCommand(executable: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
       let child: ChildProcess;
       try {
-        child = spawn(this.executable, args, {
-          env: { ...process.env, GFLOW_CLI_PROFILE: this.profileName },
-          shell: false,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+        child = spawn(executable, args, { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (error) {
         reject(new Error(error instanceof Error ? error.message : 'Could not start gflow-cli.'));
         return;
@@ -188,7 +269,7 @@ export class GFlowCli {
       child.once('error', (error) => {
         const code = (error as NodeJS.ErrnoException).code;
         finish(new Error(code === 'ENOENT'
-          ? 'gflow-cli is not installed or is not on PATH. Install it with “uv tool install gflow-cli”, then install its browser with “uv tool run --from gflow-cli playwright install chromium”.'
+          ? 'The private Clips Flow runtime could not start. Check available disk space and your connection, then try again.'
           : `Could not start gflow-cli: ${error.message}`));
       });
       child.once('close', (code) => {

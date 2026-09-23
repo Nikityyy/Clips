@@ -15,6 +15,8 @@ export const IPC_CHANNELS = {
   snapshotUpdated: 'clips:snapshot',
   menuAction: 'clips:menu-action',
   getSnapshot: 'clips:get-snapshot',
+  acceptFlowNotice: 'clips:accept-flow-notice',
+  openLegalLink: 'clips:open-legal-link',
   getStorageSummary: 'clips:get-storage-summary',
   openDataFolder: 'clips:open-data-folder',
   importFiles: 'clips:import-files',
@@ -190,6 +192,7 @@ export interface AppSnapshot {
   settings: Settings;
   capabilities: ProviderCapabilities;
   undoDeleteAvailable: boolean;
+  flowNoticeAccepted: boolean;
 }
 
 export type ErrorCode =
@@ -263,6 +266,8 @@ export interface StorageSummary {
 
 export interface ClipsApi {
   getSnapshot(): Promise<Result<AppSnapshot>>;
+  acceptFlowNotice(): Promise<Result<void>>;
+  openLegalLink(link: 'google-terms' | 'flow-terms' | 'gflow-disclaimer'): Promise<Result<void>>;
   getStorageSummary(): Promise<Result<StorageSummary>>;
   openDataFolder(): Promise<Result<void>>;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;

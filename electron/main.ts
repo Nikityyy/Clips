@@ -92,8 +92,14 @@ const MOCK_PROVIDER_ENABLED = process.env.CLIPS_TEST_PROVIDER === 'mock'
 const DEFAULT_ACCOUNT_ID = MOCK_PROVIDER_ENABLED ? 'mock-default' : 'flow-default';
 const FLOW_ACCOUNT_ID = 'flow-default';
 const FLOW_PROFILE_NAME = 'clips';
+const FLOW_NOTICE_VERSION = '2026-09';
+const LEGAL_LINKS = {
+  'google-terms': 'https://policies.google.com/terms',
+  'flow-terms': 'https://labs.google/terms',
+  'gflow-disclaimer': 'https://github.com/ffroliva/gflow-cli/blob/develop/DISCLAIMER.md',
+} as const;
 const TRUSTED_NO_INPUT = z.undefined();
-const flowCli = new GFlowCli();
+const flowCli = new GFlowCli(() => app.getPath('userData'));
 
 function makeMockCapabilities(): ProviderCapabilities {
   return {
@@ -386,7 +392,7 @@ async function loadFlowProvider(): Promise<void> {
     applyProviderDefaults();
     await mustStore().flush();
     publishSnapshot();
-    if (hasSession) void verifyFlowSession();
+    if (hasSession) await verifyFlowSession();
   } catch (error) {
     capabilities = { ...capabilities, status: 'unavailable', detail: error instanceof Error ? error.message : 'gflow-cli is not available.' };
     if (store) {
@@ -485,6 +491,15 @@ function characterFromRow(row: Row): Character {
   };
 }
 
+function flowNoticeAccepted(): boolean {
+  const value = mustStore().setting<{ version?: string } | null>('flowNoticeAcceptance', null);
+  return value?.version === FLOW_NOTICE_VERSION;
+}
+
+function requireFlowNotice(): void {
+  if (!flowNoticeAccepted()) throw new ClipsError('PERMISSION_DENIED', 'Review and accept the Google Flow notice before connecting or generating.');
+}
+
 function getSnapshot(): AppSnapshot {
   const db = mustStore();
   const settings = activeSettings();
@@ -507,6 +522,7 @@ function getSnapshot(): AppSnapshot {
     settings,
     capabilities,
     undoDeleteAvailable: Boolean(db.setting<string | null>('lastDeleteBatchId', null)),
+    flowNoticeAccepted: flowNoticeAccepted(),
   };
 }
 
@@ -1411,13 +1427,22 @@ async function readStorageSummary(): Promise<StorageSummary> {
 
 function registerIpc(): void {
   handle(IPC_CHANNELS.getSnapshot, TRUSTED_NO_INPUT, () => getSnapshot());
+  handle(IPC_CHANNELS.acceptFlowNotice, TRUSTED_NO_INPUT, async () => {
+    mustStore().setSetting('flowNoticeAcceptance', { version: FLOW_NOTICE_VERSION, acceptedAt: nowIso() });
+    await flushAndPublish();
+  });
+  handle(IPC_CHANNELS.openLegalLink, z.object({ link: z.enum(['google-terms', 'flow-terms', 'gflow-disclaimer']) }).strict(), async ({ link }: { link: keyof typeof LEGAL_LINKS }) => {
+    await shell.openExternal(LEGAL_LINKS[link]);
+  });
   handle(IPC_CHANNELS.getStorageSummary, TRUSTED_NO_INPUT, readStorageSummary);
   handle(IPC_CHANNELS.connectFlow, TRUSTED_NO_INPUT, async () => {
+    requireFlowNotice();
     if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google Flow sign-in is unavailable in the local test provider.');
 
-    if (capabilities.status === 'unavailable' || capabilities.models.length === 0) {
+    if (capabilities.models.length === 0 || capabilities.status === 'unavailable') {
       await loadFlowProvider();
     }
+    if (capabilities.status === 'ready') return capabilities;
     if (capabilities.status === 'unavailable') {
       throw new ClipsError('PROVIDER_UNAVAILABLE', capabilities.detail);
     }
@@ -1627,6 +1652,7 @@ function registerIpc(): void {
   });
 
   handle(IPC_CHANNELS.generateImage, IpcSchema.generate, async (request: GenerationRequest) => {
+    requireFlowNotice();
     assertFlowReady();
     const job = prepareGenerationRequest(request, 'image');
     await mustStore().flush();
@@ -1636,6 +1662,7 @@ function registerIpc(): void {
   });
 
   handle(IPC_CHANNELS.generateVideo, IpcSchema.imageToVideo, async (request: ImageToVideoRequest) => {
+    requireFlowNotice();
     assertFlowReady();
     const job = prepareImageToVideoRequest(request);
     await mustStore().flush();
@@ -1645,6 +1672,7 @@ function registerIpc(): void {
   });
 
   handle(IPC_CHANNELS.retryJob, z.object({ id: IpcSchema.id }).strict(), async ({ id }: { id: EntityId }) => {
+    requireFlowNotice();
     const oldJob = findJob(id);
     if (!['failed', 'cancelled'].includes(oldJob.status)) throw new ClipsError('JOB_NOT_RETRYABLE', 'Only failed or cancelled jobs can be retried.');
     validateCharacter(oldJob.characterId);
@@ -1697,7 +1725,6 @@ async function initialize(): Promise<void> {
   registerIpc();
   createWindow();
   resumeJobs();
-  if (!MOCK_PROVIDER_ENABLED) void loadFlowProvider();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -1,0 +1,15 @@
+CLIPS — INSTALLATION AND THIRD-PARTY SERVICE NOTICE
+
+Clips is open-source software provided as-is. Installing Clips does not grant Google Flow access, and Clips is not affiliated with, endorsed by, or supported by Google.
+
+Google Flow integration in Clips uses gflow-cli, an unofficial, experimental third-party connector that automates the Google Flow website. Google does not provide a public Flow API for this integration. Use may conflict with Google’s current terms or be blocked. Google may limit or suspend access to its services or your account. Veo generations may use credits or quota belonging to your Google account. You are responsible for reviewing and following the current terms that apply to your account and for any account usage.
+
+Before connecting Flow in Clips, the app will show this notice again and require your affirmative acknowledgment. You can use development-only local test mode without connecting Google Flow.
+
+Clips and its contributors make no promises that third-party services will remain available or compatible. To the extent permitted by applicable law, the software is provided without warranties. Nothing in this notice excludes liability, consumer rights, or other protections that cannot legally be excluded or waived.
+
+Third-party information:
+Google Terms: https://policies.google.com/terms
+Google Labs / Flow terms: https://labs.google/terms
+gflow-cli disclaimer: https://github.com/ffroliva/gflow-cli/blob/develop/DISCLAIMER.md
+Clips source and license: https://github.com/Nikityyy/Clips
