@@ -7,6 +7,7 @@ import type { Translate } from '@/lib/app-types';
 import { dateTime, fileSize } from '@/lib/i18n';
 import { AssetDetails } from '@/components/Studio';
 import { Button, EmptyState, IconButton, Modal, SectionHeading } from '@/components/ui';
+import { isGeneratedAsset } from '@/shared/asset-origin';
 
 export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onImport, onPaste, onDrop, onReveal, onDelete, onUseReference, onUseVideoSource, onAssign }: {
   snapshot: AppSnapshot;
@@ -69,7 +70,7 @@ export function LibraryWorkspace({ snapshot, kind, locale, t, busy, onKind, onIm
 
       {filtered.length ? <div className="library-grid">{filtered.map((asset, index) => <article key={asset.id} className={`library-card ${selectedIds.includes(asset.id) ? 'is-selected' : ''}`} style={{ ['--tile-index' as string]: index }}>
         {selecting ? <button type="button" className="library-card-select" aria-label={`${t(selectedIds.includes(asset.id) ? 'library.clearSelection' : 'library.select')}: ${asset.title}`} aria-pressed={selectedIds.includes(asset.id)} onClick={() => toggleSelect(asset.id)}><span>{selectedIds.includes(asset.id) ? <span className="selection-check">✓</span> : null}</span></button> : null}
-        <button type="button" className="library-card-open" onClick={() => { setInspecting(asset); }} aria-label={`${t('studio.inspect')}: ${asset.title}`}><div className="library-card-media">{asset.kind === 'image' ? <img src={asset.uri} alt="" loading="lazy" decoding="async" /> : <video src={asset.uri} preload="metadata" muted aria-label={asset.title} />}<span className="library-card-type">{asset.kind === 'image' ? t('library.images') : t('library.videos')}</span></div><div className="library-card-copy"><strong>{asset.title}</strong><span>{dateTime(locale, asset.createdAt)}</span><small>{fileSize(locale, asset.sizeBytes)}</small></div></button>
+        <button type="button" className="library-card-open" onClick={() => { setInspecting(asset); }} aria-label={`${t('studio.inspect')}: ${asset.title}`}><div className="library-card-media">{asset.kind === 'image' ? <img src={asset.uri} alt="" loading="lazy" decoding="async" /> : <video src={asset.uri} preload="metadata" muted aria-label={asset.title} />}<span className="library-card-type">{asset.kind === 'image' ? t('library.images') : t('library.videos')}</span><span className={isGeneratedAsset(asset) ? 'library-card-origin is-generated' : 'library-card-origin is-imported'}>{t(isGeneratedAsset(asset) ? 'library.generated' : 'library.imported')}</span></div><div className="library-card-copy"><strong>{asset.title}</strong><span>{dateTime(locale, asset.createdAt)}</span><small>{fileSize(locale, asset.sizeBytes)}</small></div></button>
       </article>)}</div> : query ? <div className="library-empty"><EmptyState icon={Search} title={t('library.emptySearch', { query })} action={<Button variant="quiet" onClick={() => setQuery('')}>{t('library.clearSearch')}</Button>} /></div>
         : <div className="library-empty"><EmptyState icon={kind === 'video' ? FileUp : Images} title={t(kind === 'image' ? 'library.emptyImagesTitle' : kind === 'video' ? 'library.emptyVideosTitle' : 'library.emptyAllTitle')} body={t('library.emptyBody')} action={<Button variant="primary" icon={FileUp} disabled={busy} onClick={onImport}>{t('library.import')}</Button>} /></div>}
 

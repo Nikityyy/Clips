@@ -11,6 +11,7 @@ import { dateTime, durationLabel, fileSize } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
 import { Button, EmptyState, FieldLabel, IconButton, MenuSelect, Modal, SectionHeading } from '@/components/ui';
 import { friendlyModelName, readableModelFallback } from '@/shared/model-label';
+import { characterReferenceIds, isGeneratedAsset, manualReferenceCapacity } from '@/shared/asset-origin';
 
 export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, onImport, onPaste, onDrop, onCreate, onCharacters, onConnectFlow }: {
   snapshot: AppSnapshot;
@@ -34,8 +35,17 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
   const model = modeModels.find((item) => item.id === draft.modelId) ?? modeModels[0];
   const aspectRatios = mode === 'image' ? snapshot.capabilities.imageAspectRatios : snapshot.capabilities.videoAspectRatios;
   const maxReferences = model?.referenceCap ?? 0;
+  const figureReferenceIds = characterReferenceIds(character);
+  const figureReferenceSet = new Set(figureReferenceIds);
+  const figureReferenceCount = figureReferenceIds.length;
+  const manualCapacity = manualReferenceCapacity(character, maxReferences);
   const maxOutputs = snapshot.capabilities.provider === 'google-flow' ? 4 : 6;
-  const selectedReferences = snapshot.assets.filter((asset) => draft.referenceAssetIds.includes(asset.id) && asset.kind === 'image');
+  const selectedReferences = snapshot.assets.filter((asset) => !asset.deletedAt && draft.referenceAssetIds.includes(asset.id) && asset.kind === 'image' && !figureReferenceSet.has(asset.id));
+  const remainingReferenceSlots = Math.max(0, manualCapacity - selectedReferences.length);
+  const totalReferenceCount = selectedReferences.length + figureReferenceCount;
+  const referenceCountHint = figureReferenceCount
+    ? t('create.characterReferenceCountHint', { count: figureReferenceCount, character: character?.name ?? '', manualCount: selectedReferences.length, remaining: remainingReferenceSlots })
+    : t('create.referenceCountHint', { total: totalReferenceCount, max: maxReferences, remaining: remainingReferenceSlots });
   const outputLabel = t(draft.outputCount === 1 ? 'common.count.one' : 'common.count.other', { count: draft.outputCount });
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -52,10 +62,23 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
     onDraft({ prompt: next.slice(0, 20000) });
   };
 
+  const changeCharacter = (characterId: string) => {
+    const nextCharacter = snapshot.characters.find((item) => item.id === characterId) ?? null;
+    const manualReferences = draft.referenceAssetIds.filter((id) => !figureReferenceSet.has(id));
+    const capacity = manualReferenceCapacity(nextCharacter, maxReferences);
+    onDraft({ characterId: characterId || null, referenceAssetIds: manualReferences.slice(0, capacity) });
+  };
+
+  const changeModel = (modelId: string) => {
+    const nextModel = modeModels.find((item) => item.id === modelId);
+    const capacity = manualReferenceCapacity(character, nextModel?.referenceCap ?? 0);
+    onDraft({ modelId, referenceAssetIds: draft.referenceAssetIds.filter((id) => !figureReferenceSet.has(id)).slice(0, capacity) });
+  };
+
   const toggleReference = (assetId: string) => {
     const references = draft.referenceAssetIds.includes(assetId)
       ? draft.referenceAssetIds.filter((id) => id !== assetId)
-      : draft.referenceAssetIds.length >= maxReferences ? draft.referenceAssetIds : [...draft.referenceAssetIds, assetId].slice(0, maxReferences);
+      : selectedReferences.length >= remainingReferenceSlots ? draft.referenceAssetIds : [...draft.referenceAssetIds, assetId];
     onDraft({ referenceAssetIds: references });
   };
 
@@ -63,7 +86,7 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
     <div className={`composer-panel ${dragging ? 'is-drop-target' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={handleDrop}>
       <div className="composer-panel-heading">
         <div><span className="composer-eyebrow">{t('header.create')}</span><h2>{t(mode === 'image' ? 'create.imageTitle' : 'create.videoTitle')}</h2></div>
-        <button type="button" className={`composer-local-pill ${snapshot.capabilities.status === 'ready' || snapshot.capabilities.status === 'mock-ready' ? 'is-connected' : 'needs-connection'}`} onClick={snapshot.capabilities.status === 'ready' || snapshot.capabilities.status === 'mock-ready' ? undefined : onConnectFlow} disabled={busy || snapshot.capabilities.status === 'checking'}><span />{t(snapshot.capabilities.status === 'ready' ? 'account.statusReady' : snapshot.capabilities.status === 'mock-ready' ? 'account.statusLocal' : snapshot.capabilities.status === 'checking' ? 'account.statusChecking' : snapshot.capabilities.status === 'unavailable' ? 'account.statusUnavailable' : 'account.statusNeedsLogin')}</button>
+        {snapshot.capabilities.status !== 'ready' && snapshot.capabilities.status !== 'mock-ready' ? <button type="button" className="composer-local-pill needs-connection" aria-label={t(snapshot.capabilities.status === 'checking' ? 'account.statusChecking' : snapshot.capabilities.status === 'unavailable' ? 'account.statusUnavailable' : 'account.statusNeedsLogin')} onClick={onConnectFlow} disabled={busy || snapshot.capabilities.status === 'checking'}><span />{t(snapshot.capabilities.status === 'checking' ? 'create.checkingConnection' : snapshot.capabilities.status === 'unavailable' ? 'create.fixConnection' : 'create.connectAccount')}</button> : null}
       </div>
 
       <fieldset className="mode-switch">
@@ -74,28 +97,28 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
 
       <section className="composer-field">
         <FieldLabel>{t('create.character')}</FieldLabel>
-        <div className="composer-inline-control"><MenuSelect className="composer-select" label={t('create.character')} value={draft.characterId ?? ''} options={[{ value: '', label: t('create.noCharacter') }, ...snapshot.characters.map((item) => ({ value: item.id, label: item.name, description: item.description || t('character.noDescription'), imageUrl: snapshot.assets.find((asset) => asset.id === item.portraitAssetId)?.uri }))]} onChange={(value) => onDraft({ characterId: value || null })} /><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
+        <div className="composer-inline-control"><MenuSelect className="composer-select" label={t('create.character')} value={draft.characterId ?? ''} options={[{ value: '', label: t('create.noCharacter') }, ...snapshot.characters.map((item) => ({ value: item.id, label: item.name, description: item.description || t('character.noDescription'), imageUrl: (snapshot.assets.find((asset) => asset.id === item.portraitAssetId && asset.kind === 'image' && !asset.deletedAt) ?? snapshot.assets.find((asset) => item.referenceAssetIds.includes(asset.id) && asset.kind === 'image' && !asset.deletedAt))?.uri }))]} onChange={changeCharacter} /><IconButton label={t('character.create')} icon={Plus} onClick={onCharacters} /></div>
         <p className="composer-hint character-recommendation">{t('create.characterRecommendation')}</p>
       </section>
       <section className="composer-field prompt-field">
         <div className="field-label-row"><label className="field-label" htmlFor="generation-prompt">{t('create.writePrompt')}</label><span className="field-hint">{new Intl.NumberFormat(snapshot.settings.locale).format(draft.prompt.length)} / 20,000</span></div>
         <textarea id="generation-prompt" data-tour="prompt" className="prompt-input" maxLength={20000} spellCheck value={draft.prompt} onChange={(event) => onDraft({ prompt: event.currentTarget.value })} placeholder={t(mode === 'image' ? 'create.promptHint' : 'create.promptVideoHint')} />
-        <div className="prompt-footer"><span>{t('create.switchPrompt')}</span><button type="button" className="text-action" disabled={!character || !(character.prompt || character.description)} onClick={addCharacterPrompt}><UserRound size={13} aria-hidden="true" />{t('create.insertCharacterPrompt')}</button></div>
+        {character && (character.prompt || character.description) ? <div className="prompt-footer"><button type="button" className="text-action" onClick={addCharacterPrompt}><UserRound size={13} aria-hidden="true" />{t('create.insertCharacterPrompt')}</button></div> : null}
       </section>
       <section className={`composer-field reference-field ${mode === 'video' ? 'video-reference-field' : ''}`} data-tour="references">
-        <div className="composer-section-line"><FieldLabel>{t(mode === 'video' ? 'create.videoReferences' : 'create.references')}</FieldLabel><span className="field-hint">{model && maxReferences > 0 ? `${selectedReferences.length} / ${maxReferences}` : model ? t('create.referencesUnsupported') : ''}</span></div>
+        <div className="composer-section-line"><FieldLabel>{t(mode === 'video' ? 'create.videoReferences' : 'create.references')}</FieldLabel>{model && maxReferences > 0 ? <span className="field-hint reference-count-hint tooltip-trigger" role="note" aria-label={referenceCountHint} data-tooltip={referenceCountHint}>{totalReferenceCount} / {maxReferences}</span> : model ? <span className="field-hint">{t('create.referencesUnsupported')}</span> : null}</div>
         {selectedReferences.length ? <div className="reference-chip-list">{selectedReferences.map((asset) => <div className="reference-chip" key={asset.id}><img src={asset.uri} alt="" /><span>{asset.title}</span><IconButton label={`${t('create.removeReference')}: ${asset.title}`} icon={X} size="small" onClick={() => toggleReference(asset.id)} /></div>)}</div> : <p className="composer-hint">{model && maxReferences === 0 ? t('create.referencesUnsupported') : t(mode === 'video' ? 'create.videoReferenceHint' : 'create.referenceHint')}</p>}
         <div className="reference-actions">
-          <Button size="small" variant="secondary" icon={Plus} className="picker-select-button" disabled={!maxReferences} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button>
-          <Button size="small" variant="quiet" icon={FolderOpen} onClick={onImport}>{t('create.importReference')}</Button>
-          <Button size="small" variant="quiet" icon={FileImage} onClick={onPaste}>{t('create.pasteReference')}</Button>
+          <Button size="small" variant="secondary" icon={Plus} className="picker-select-button" disabled={!maxReferences || (!remainingReferenceSlots && !selectedReferences.length)} onClick={() => setPicker('references')}>{t('create.chooseFromLibrary')}</Button>
+          <Button size="small" variant="quiet" icon={FolderOpen} disabled={!remainingReferenceSlots} onClick={onImport}>{t('create.importReference')}</Button>
+          <Button size="small" variant="quiet" icon={FileImage} disabled={!remainingReferenceSlots} onClick={onPaste}>{t('create.pasteReference')}</Button>
         </div>
       </section>
 
       <section className="composer-field generation-options" data-tour="options">
         <div className="composer-field">
           <FieldLabel>{t('create.model')}</FieldLabel>
-          <MenuSelect className="composer-select" label={t('create.model')} value={draft.modelId} options={modeModels.map((item) => ({ value: item.id, label: item.label, description: item.referenceCap ? t('create.modelReferenceCap', { count: item.referenceCap }) : undefined }))} onChange={(value) => onDraft({ modelId: value, referenceAssetIds: draft.referenceAssetIds.slice(0, modeModels.find((item) => item.id === value)?.referenceCap ?? 0) })} disabled={!modeModels.length} />
+          <MenuSelect className="composer-select" label={t('create.model')} value={draft.modelId} options={modeModels.map((item) => ({ value: item.id, label: item.label, description: item.referenceCap ? t('create.modelReferenceCap', { count: item.referenceCap }) : undefined }))} onChange={changeModel} disabled={!modeModels.length} />
         </div>
         <div className="composer-field">
           <FieldLabel>{t('create.ratio')}</FieldLabel>
@@ -106,9 +129,9 @@ export function CreatorPanel({ snapshot, mode, draft, busy, t, onMode, onDraft, 
       </section>
       {mode === 'image' ? <section className="composer-field output-count-field"><FieldLabel>{t('create.outputs')}</FieldLabel><div className="count-control"><button type="button" aria-label={t('create.decreaseOutputs')} disabled={draft.outputCount <= 1} onClick={() => onDraft({ outputCount: Math.max(1, draft.outputCount - 1) })}><Minus size={14} aria-hidden="true" /></button><output aria-live="polite">{outputLabel}</output><button type="button" aria-label={t('create.increaseOutputs')} disabled={draft.outputCount >= maxOutputs} onClick={() => onDraft({ outputCount: Math.min(maxOutputs, draft.outputCount + 1) })}><Plus size={14} aria-hidden="true" /></button></div></section> : null}
 
-      <div className="composer-panel-bottom"><p><Info size={14} aria-hidden="true" />{t(snapshot.capabilities.provider === 'google-flow' ? 'create.flowCreditHint' : 'create.localOnly')}</p><Button variant="primary" className="create-submit" icon={mode === 'image' ? Sparkles : Clapperboard} busy={busy} disabled={!draft.prompt.trim() || (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') || !model} onClick={onCreate}>{busy ? t('create.creating') : mode === 'image' ? t(draft.outputCount === 1 ? 'create.createImage' : 'create.createImages', { count: draft.outputCount }) : t('create.createVideo')}</Button></div>
+      <div className="composer-panel-bottom"><p><Info size={14} aria-hidden="true" />{t(snapshot.capabilities.provider === 'google-flow' ? 'create.flowCreditHint' : 'create.localOnly')}</p><Button variant="primary" className="create-submit" icon={mode === 'image' ? Sparkles : Clapperboard} busy={busy} disabled={!draft.prompt.trim() || (snapshot.capabilities.provider === 'google-flow' && snapshot.capabilities.status !== 'ready') || !model || totalReferenceCount > maxReferences} onClick={onCreate}>{busy ? t('create.creating') : mode === 'image' ? t(draft.outputCount === 1 ? 'create.createImage' : 'create.createImages', { count: draft.outputCount }) : t('create.createVideo')}</Button></div>
 
-      {picker ? <AssetPicker snapshot={snapshot} selectedIds={draft.referenceAssetIds} maxSelected={maxReferences} title={t(mode === 'video' ? 'create.chooseVideoReferences' : 'create.chooseFromLibrary')} t={t} onClose={() => setPicker(null)} onConfirm={(ids) => { onDraft({ referenceAssetIds: ids }); setPicker(null); }} /> : null}
+      {picker ? <AssetPicker snapshot={snapshot} selectedIds={draft.referenceAssetIds.filter((id) => !figureReferenceSet.has(id))} excludedIds={figureReferenceIds} maxSelected={remainingReferenceSlots} title={t(mode === 'video' ? 'create.chooseVideoReferences' : 'create.chooseFromLibrary')} t={t} onClose={() => setPicker(null)} onConfirm={(ids) => { onDraft({ referenceAssetIds: ids.filter((id) => !figureReferenceSet.has(id)) }); setPicker(null); }} /> : null}
     </div>
   );
 }
@@ -125,9 +148,7 @@ export function CreatorCanvas({ snapshot, mode, selectedAssetId, t, onSelect, on
   onInspect: (asset: Asset) => void;
 }) {
   const activeKind = mode === 'image' ? 'image' : 'video';
-  const all = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === activeKind);
-  const generated = all.filter((asset) => asset.provenance.jobId);
-  const assets = (generated.length ? generated : all).slice(0, 12);
+  const assets = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === activeKind && isGeneratedAsset(asset)).slice(0, 12);
   const runningJobs = snapshot.jobs.filter((job) => job.status === 'queued' || job.status === 'running');
 
   return (
@@ -201,18 +222,20 @@ export function RecentJobs({ jobs, t, onOpenQueue }: { jobs: GenerationJob[]; t:
   </div></section>;
 }
 
-export function AssetPicker({ snapshot, selectedIds, maxSelected = 12, title, t, onClose, onConfirm }: {
+export function AssetPicker({ snapshot, selectedIds, excludedIds = [], maxSelected = 12, title, t, onClose, onConfirm }: {
   snapshot: AppSnapshot;
   selectedIds: string[];
+  excludedIds?: string[];
   maxSelected?: number;
   title: string;
   t: Translate;
   onClose: () => void;
   onConfirm: (ids: string[]) => void;
 }) {
-  const [selected, setSelected] = useState<string[]>(selectedIds);
+  const [selected, setSelected] = useState<string[]>(selectedIds.filter((id) => !excludedIds.includes(id)));
   const [query, setQuery] = useState('');
-  const assets = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === 'image');
+  const excluded = new Set(excludedIds);
+  const assets = snapshot.assets.filter((asset) => !asset.deletedAt && asset.kind === 'image' && !excluded.has(asset.id));
   const filtered = assets.filter((asset) => asset.title.toLocaleLowerCase(snapshot.settings.locale).includes(query.toLocaleLowerCase(snapshot.settings.locale)));
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : current.length >= maxSelected ? current : [...current, id]);
   return (

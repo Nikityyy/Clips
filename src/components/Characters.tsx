@@ -76,7 +76,7 @@ function CharacterForm({ character, portraits, t, busy, onImportImages, onClose,
     if (await onSave(payload, character?.id)) onClose();
   };
 
-  return <Modal title={t(character ? 'character.editTitle' : 'character.createTitle')} description={t('character.descriptionHint')} onClose={onClose} closeLabel={t('common.close')} wide footer={<div className="form-modal-actions"><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" icon={character ? Pencil : Plus} busy={busy} disabled={!name.trim()} onClick={() => { const form = document.getElementById('character-form'); if (form instanceof HTMLFormElement) form.requestSubmit(); }}>{t(character ? 'common.save' : 'character.createButton')}</Button></div>}>
+  return <Modal title={t(character ? 'character.editTitle' : 'character.createTitle')} onClose={onClose} closeLabel={t('common.close')} wide footer={<div className="form-modal-actions"><Button onClick={onClose}>{t('common.cancel')}</Button><Button variant="primary" icon={character ? Pencil : Plus} busy={busy} disabled={!name.trim()} onClick={() => { const form = document.getElementById('character-form'); if (form instanceof HTMLFormElement) form.requestSubmit(); }}>{t(character ? 'common.save' : 'character.createButton')}</Button></div>}>
     <form id="character-form" className="character-form" onSubmit={submit}>
       <div className="character-form-main">
         <div><FieldLabel htmlFor="character-name">{t('character.name')}</FieldLabel><input id="character-name" className="text-input" maxLength={80} required value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder={t('character.nameHint')} /></div>
@@ -85,7 +85,8 @@ function CharacterForm({ character, portraits, t, busy, onImportImages, onClose,
       </div>
       <div className="character-form-side">
         <div>
-          <FieldLabel htmlFor="character-portrait" hint={t('character.portraitHint')}>{t('character.portrait')}</FieldLabel>
+          <FieldLabel htmlFor="character-portrait">{t('character.portrait')}</FieldLabel>
+          <p className="character-portrait-hint">{t('character.portraitHint')}</p>
           <MenuSelect id="character-portrait" className="setting-select" label={t('character.portrait')} value={portraitAssetId} options={[{ value: '', label: t('character.autoPortrait') }, ...portraits.map((asset) => ({ value: asset.id, label: asset.title, imageUrl: asset.uri }))]} onChange={setPortraitAssetId} />
         </div>
         <div className="character-reference-picker">

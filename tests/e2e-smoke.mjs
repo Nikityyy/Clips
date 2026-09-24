@@ -168,6 +168,8 @@ try {
   assert.equal(initial.data.assets.length, 0, 'new test profiles should not be preloaded with example media');
   assert.equal(initial.data.characters.length, 0, 'new test profiles should not be preloaded with characters');
   assert.equal(initial.data.capabilities.provider, 'mock');
+  assert.equal(await page.locator('.composer-local-pill').count(), 0, 'a connected local workspace should not repeat its provider status above the creator');
+  assert.equal(await page.locator('.phase-panel-brand .local-mark').count(), 0, 'the creator brand row should not repeat the provider name');
   assert.equal(await page.getByRole('button', { name: /Flow downloads/i }).count(), 0, 'generation results should stay in Clips instead of exposing a manual Flow handoff');
   const flowConnect = await page.evaluate(() => window.clips.connectFlow());
   assert.equal(flowConnect.ok, false, 'the Flow connect IPC should be registered even when the local test provider is active');
@@ -236,7 +238,9 @@ try {
   }), firstAsset.id);
   assert.ok(characterResult.ok, 'a character can use a library portrait');
   assert.equal(characterResult.data.portraitAssetId, firstAsset.id, 'the selected portrait should be saved on the character');
-  await page.locator('.composer-panel .menu-select').first().getByRole('button').click();
+  const characterSelect = page.locator('.composer-panel .menu-select').first().getByRole('button');
+  const noFigureSelectHeight = await characterSelect.evaluate((element) => element.getBoundingClientRect().height);
+  await characterSelect.click();
   const characterOption = page.getByRole('listbox', { name: 'Character' }).getByRole('option', { name: /Luma/ });
   try {
     await characterOption.locator('img').waitFor({ timeout: 2500 });
@@ -249,6 +253,25 @@ try {
   }
   assert.equal(await characterOption.locator('img').count(), 1, 'character choices should show their portrait');
   await characterOption.click();
+  const selectedFigureSelectHeight = await characterSelect.evaluate((element) => element.getBoundingClientRect().height);
+  assert.equal(selectedFigureSelectHeight, noFigureSelectHeight, 'choosing a figure should not change the selector height');
+  assert.equal(await page.locator('.reference-count-hint').textContent(), '1 / 12', 'the reference limit should include the selected figure portrait');
+  assert.equal(await page.locator('.reference-chip-list .reference-chip').count(), 0, 'figure-owned images should not be shown as manually selected references');
+  await page.locator('.reference-count-hint').hover();
+  const referenceTooltip = page.locator('#clips-tooltip');
+  await referenceTooltip.waitFor({ state: 'visible' });
+  assert.match(await referenceTooltip.textContent(), /1 from “Luma”/, 'the reference counter tooltip should explain figure-provided images');
+  await page.locator('.composer-panel .menu-select').first().getByRole('button').click();
+  await page.getByRole('listbox', { name: 'Character' }).getByRole('option', { name: 'No character' }).click();
+  assert.equal(await page.locator('.reference-count-hint').textContent(), '0 / 12', 'removing the figure should release its automatic reference slots');
+  await page.locator('.composer-panel .menu-select').first().getByRole('button').click();
+  await page.getByRole('listbox', { name: 'Character' }).getByRole('option', { name: /Luma/ }).click();
+  assert.equal(await page.locator('.reference-count-hint').textContent(), '1 / 12', 'switching figures should recalculate automatic references');
+  await page.getByRole('button', { name: 'Choose from library' }).click();
+  const characterReferencePicker = page.locator('.asset-picker-modal');
+  const availableReferenceNames = await characterReferencePicker.locator('.picker-item').evaluateAll((items) => items.map((item) => item.getAttribute('aria-label')));
+  assert.ok(!availableReferenceNames.includes(firstAsset.title), 'a figure-owned image should not be offered again as a manual reference');
+  await characterReferencePicker.getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByRole('button', { name: 'Video', exact: true }).click();
   await page.getByText('Reference images', { exact: true }).waitFor();
@@ -266,6 +289,7 @@ try {
 
   await page.locator('.rail-nav-item[aria-label="Library"]').click();
   await page.getByRole('heading', { name: 'Library', level: 1 }).waitFor();
+  await page.locator('.library-card-origin.is-generated').first().waitFor();
   assert.equal(await page.locator('.library-kind-tabs button').count(), 3, 'the single library should offer in-place media filters');
   const importPath = path.join(userData, 'e2e-reference.png');
   await copyFile(path.join(root, 'fixtures', 'dev-media', 'mara-01.png'), importPath);
@@ -276,10 +300,14 @@ try {
   await page.getByRole('button', { name: /Inspect asset: e2e-reference/ }).waitFor();
   const importedState = await page.evaluate(async () => { const snapshot = await window.clips.getSnapshot(); return snapshot.ok ? snapshot.data.assets.filter((asset) => asset.title.includes('e2e-reference')).map(({ title, kind, deletedAt }) => ({ title, kind, deletedAt })) : snapshot; });
   assert.ok(importedState.some((asset) => asset.kind === 'image' && !asset.deletedAt), `the imported reference should be active in the library: ${JSON.stringify(importedState)}`);
+  await page.locator('.library-card').filter({ hasText: 'e2e-reference' }).locator('.library-card-origin.is-imported').waitFor();
   await page.locator('.rail-nav-item[aria-label="Create"]').click();
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  const recentResultTitles = await page.locator('.result-card-caption strong').allTextContents();
+  assert.ok(recentResultTitles.length > 0 && !recentResultTitles.includes('e2e-reference'), 'recent creation results should never fall back to imported library images');
   await page.getByRole('button', { name: 'Choose from library' }).click();
   const picker = page.locator('.asset-picker-modal');
-  await page.getByRole('heading', { name: 'Choose video reference images' }).waitFor();
+  await page.getByRole('heading', { name: 'Choose from library' }).waitFor();
   assert.ok((await picker.boundingBox()).height < 620, 'a short library should keep the reference picker compact');
   const chooseButton = page.locator('.reference-actions .picker-select-button');
   assert.equal(await chooseButton.evaluate((element) => getComputedStyle(element).justifyContent), 'center', 'the library picker action label should be centered');
@@ -358,6 +386,11 @@ try {
       assert.deepEqual(layout.unnamedButtons, [], `${route} has buttons without accessible names at ${size.width}px: ${JSON.stringify(layout.unnamedButtons)}`);
       assert.deepEqual(layout.undersizedText, [], `${route} has text below 10.5px at ${size.width}px: ${JSON.stringify(layout.undersizedText)}`);
       assert.ok(layout.quietTextContrast >= 4.5, `${route} muted text contrast is below WCAG AA at ${size.width}px: ${layout.quietTextContrast}`);
+      if (route === 'queue') {
+        const queuePadding = await page.locator('.queue-workspace').evaluate((element) => getComputedStyle(element).paddingInlineStart);
+        const expectedPadding = size.width <= 600 ? 12 : size.width <= 860 ? 17 : Math.max(19, Math.min(40, size.width * .03));
+        assert.equal(queuePadding, expectedPadding + 'px', 'the queue should align with library and character page insets at ' + size.width + 'px');
+      }
       if (route === 'create' && size.width === 360) {
         await page.locator('.reference-actions .picker-select-button').click();
         const mobilePicker = page.locator('.asset-picker-modal');

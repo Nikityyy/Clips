@@ -7,6 +7,7 @@ import {
 import type { AppSnapshot, Asset, Character, CreateCharacterInput, ErrorCode, GenerationDraft, GenerationJob, ImportIssue, JobKind, Locale, NativeMenuAction, SettingsPatch, UpdateCharacterInput } from '@/shared/contracts';
 import type { Notice, Translate, View } from '@/lib/app-types';
 import { translate, type TranslationKey } from '@/lib/i18n';
+import { characterReferenceIds, manualReferenceCapacity } from '@/shared/asset-origin';
 import { AccountsWorkspace, SettingsWorkspace } from '@/components/Workspace';
 import { CharactersWorkspace } from '@/components/Characters';
 import { GuidedTour } from '@/components/GuidedTour';
@@ -36,6 +37,18 @@ const navDefinition = [
   { view: 'library', key: 'nav.library', icon: FolderClosed },
   { view: 'queue', key: 'nav.queue', icon: ListTodo },
 ] as const;
+
+function manualReferenceLimit(snapshot: AppSnapshot, draft: GenerationDraft): number {
+  const character = snapshot.characters.find((item) => item.id === draft.characterId);
+  const model = snapshot.capabilities.models.find((item) => item.id === draft.modelId);
+  return manualReferenceCapacity(character, model?.referenceCap ?? 0);
+}
+
+function removeCharacterReferences(snapshot: AppSnapshot, draft: GenerationDraft): string[] {
+  const character = snapshot.characters.find((item) => item.id === draft.characterId);
+  const characterIds = new Set(characterReferenceIds(character));
+  return draft.referenceAssetIds.filter((id) => !characterIds.has(id));
+}
 
 export function ClipsApp() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
@@ -272,10 +285,14 @@ export function ClipsApp() {
     if (!snapshot || assets.length === 0) return;
     const current = drafts?.[createMode] ?? snapshot.settings.drafts[createMode];
     const imageIds = assets.filter((asset) => asset.kind === 'image').map((asset) => asset.id);
-    const referenceAssetIds = [...new Set([...current.referenceAssetIds, ...imageIds])].slice(0, 12);
-    if (referenceAssetIds.length !== current.referenceAssetIds.length) {
+    const currentManual = removeCharacterReferences(snapshot, current);
+    const capacity = manualReferenceLimit(snapshot, current);
+    const referenceAssetIds = [...new Set([...currentManual, ...imageIds])].slice(0, capacity);
+    if (referenceAssetIds.length !== currentManual.length || currentManual.length !== current.referenceAssetIds.length) {
       updateDraft(createMode, { referenceAssetIds });
-      announce(translate(locale, 'create.referencesAdded'));
+      announce(translate(locale, referenceAssetIds.length > currentManual.length ? 'create.referencesAdded' : 'create.referenceLimitReached'));
+    } else if (imageIds.length && !capacity) {
+      announce(translate(locale, 'create.referenceLimitReached'));
     }
   }, [announce, createMode, drafts, locale, snapshot, updateDraft]);
 
@@ -408,33 +425,49 @@ export function ClipsApp() {
   }, [announce, locale]);
 
   const useAsReference = (asset: Asset) => {
-    if (asset.kind !== 'image') return;
+    if (asset.kind !== 'image' || !snapshot) return;
     setCreateMode('image');
-    updateDraft('image', { referenceAssetIds: [...new Set([...(drafts?.image ?? snapshot?.settings.drafts.image)?.referenceAssetIds ?? [], asset.id])].slice(0, 12) });
+    const current = drafts?.image ?? snapshot.settings.drafts.image;
+    const referenceAssetIds = [...new Set([...removeCharacterReferences(snapshot, current), asset.id])].slice(0, manualReferenceLimit(snapshot, current));
+    updateDraft('image', { referenceAssetIds });
     setView('create');
-    announce(translate(locale, 'create.referencesAdded'));
+    announce(translate(locale, referenceAssetIds.includes(asset.id) ? 'create.referencesAdded' : 'create.referenceLimitReached'));
   };
 
   const useAsVideoSource = useCallback((asset: Asset) => {
-    if (asset.kind !== 'image') return;
+    if (asset.kind !== 'image' || !snapshot) return;
     setCreateMode('video');
-    const current = drafts?.video ?? snapshot?.settings.drafts.video;
-    updateDraft('video', { referenceAssetIds: [...new Set([...(current?.referenceAssetIds ?? []), asset.id])].slice(0, 12), sourceImageId: null });
+    const current = drafts?.video ?? snapshot.settings.drafts.video;
+    const referenceAssetIds = [...new Set([...removeCharacterReferences(snapshot, current), asset.id])].slice(0, manualReferenceLimit(snapshot, current));
+    updateDraft('video', { referenceAssetIds, sourceImageId: null });
     setView('create');
-  }, [drafts, snapshot, updateDraft]);
+    if (!referenceAssetIds.includes(asset.id)) announce(translate(locale, 'create.referenceLimitReached'));
+  }, [announce, locale, drafts, snapshot, updateDraft]);
 
   const createWithCharacter = useCallback((character: Character) => {
+    if (!snapshot) return;
     setCreateMode('image');
-    updateDraft('image', { characterId: character.id, referenceAssetIds: character.referenceAssetIds.slice(0, 12) });
+    const current = drafts?.image ?? snapshot.settings.drafts.image;
+    const previousCharacter = snapshot.characters.find((item) => item.id === current.characterId);
+    const previousIds = new Set(characterReferenceIds(previousCharacter));
+    const manualReferences = current.referenceAssetIds.filter((id) => !previousIds.has(id));
+    const model = snapshot.capabilities.models.find((item) => item.id === current.modelId);
+    const capacity = manualReferenceCapacity(character, model?.referenceCap ?? 0);
+    updateDraft('image', { characterId: character.id, referenceAssetIds: manualReferences.slice(0, capacity) });
     setView('create');
-  }, [updateDraft]);
+  }, [drafts, snapshot, updateDraft]);
 
   const reuseJobSettings = useCallback((job: GenerationJob) => {
     if (!snapshot) return;
     updateDraft(job.kind, {
       prompt: job.prompt,
       characterId: job.characterId,
-      referenceAssetIds: job.inputAssetIds.slice(0, 12),
+      referenceAssetIds: (() => {
+        const character = snapshot.characters.find((item) => item.id === job.characterId);
+        const characterIds = new Set(characterReferenceIds(character));
+        const model = snapshot.capabilities.models.find((item) => item.id === job.modelId);
+        return job.inputAssetIds.filter((id) => !characterIds.has(id)).slice(0, manualReferenceCapacity(character, model?.referenceCap ?? 0));
+      })(),
       sourceImageId: null,
       modelId: job.modelId,
       aspectRatio: job.aspectRatio,
@@ -630,7 +663,7 @@ export function ClipsApp() {
       </nav>
 
       {view === 'create' ? <aside className="phase-one-panel creator-side-panel">
-        <div className="phase-panel-brand"><span className="brand-wordmark">{t('app.name')}</span><span className="local-mark">{t(snapshot.capabilities.provider === 'mock' ? 'header.sampleMode' : 'account.flowTitle')}</span></div>
+        <div className="phase-panel-brand"><span className="brand-wordmark">{t('app.name')}</span></div>
         <CreatorPanel snapshot={snapshot} mode={createMode} draft={currentDraft} busy={pending === 'generation'} t={t} onMode={setCreateMode} onDraft={(patch) => updateDraft(createMode, patch)} onImport={() => void importReferences()} onPaste={() => void pasteReference()} onDrop={(files) => void dropReferences(files)} onCreate={() => void createGeneration()} onCharacters={() => setView('characters')} onConnectFlow={() => snapshot.capabilities.status === 'unavailable' ? setView('profile') : void connectFlow()} />
       </aside> : null}
 
