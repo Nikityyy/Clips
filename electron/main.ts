@@ -4,7 +4,10 @@ import { promises as fs, createReadStream, existsSync, openSync, readSync, close
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { GFlowCli, isFlowSessionMissing, isFlowSignInCancelled, parseGenerationPaths, type FlowCatalog } from './gflow-cli';
+import { FlowCatalogClient, type FlowCatalog } from './flow-catalog';
+import { FlowSessionError, FlowSessionManager } from './flow-session';
+import { GoogleFlowProvider } from './flow-provider';
+import { mapFlowCapabilities } from './flow-capabilities';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { DatabaseStore } from './database';
@@ -93,17 +96,26 @@ const DEFAULT_ACCOUNT_ID = MOCK_PROVIDER_ENABLED ? 'mock-default' : 'flow-defaul
 const FLOW_ACCOUNT_ID = 'flow-default';
 const FLOW_PROFILE_NAME = 'clips';
 const FLOW_NOTICE_VERSION = '2026-09';
-const FLOW_ACCOUNT_RESET_VERSION = 1;
 const LEGAL_LINKS = {
   'google-terms': 'https://policies.google.com/terms',
   'flow-terms': 'https://labs.google/terms',
   'gflow-disclaimer': 'https://github.com/ffroliva/gflow-cli/blob/develop/DISCLAIMER.md',
 } as const;
 const TRUSTED_NO_INPUT = z.undefined();
-const flowCli = new GFlowCli(
+const flowCatalogClient = new FlowCatalogClient(
   () => app.getPath('userData'),
-  () => app.isPackaged && process.platform !== 'win32' ? path.join(process.resourcesPath, 'flow-runtime-seed') : null,
+  () => app.isPackaged ? path.join(process.resourcesPath, 'flow-runtime-seed') : null,
 );
+const flowSessions = new FlowSessionManager(() => app.getPath('userData'));
+let flowCatalogPromise: Promise<FlowCatalog> | null = null;
+let flowCatalogLoadStarted = false;
+
+function getFlowCatalog(): Promise<FlowCatalog> {
+  if (!flowCatalogPromise) {
+    flowCatalogPromise = flowCatalogClient.catalog().finally(() => { flowCatalogPromise = null; });
+  }
+  return flowCatalogPromise;
+}
 
 function makeMockCapabilities(): ProviderCapabilities {
   return {
@@ -178,8 +190,6 @@ let windowStateTimer: ReturnType<typeof setTimeout> | null = null;
 let menuLocale: Locale = 'en';
 let snapshotRevision = 0;
 const scheduledJobs = new Set<EntityId>();
-let flowAccountResetInProgress = false;
-let flowAccountResetPromise: Promise<void> | null = null;
 
 function mustStore(): DatabaseStore {
   if (!store) throw new ClipsError('STORAGE_ERROR', 'Clips storage is still starting. Try again in a moment.');
@@ -343,32 +353,6 @@ function activeFlowProfileName(): string {
   return flowProfileName(activeSettings().activeAccountId);
 }
 
-function buildFlowCapabilities(catalog: FlowCatalog, profileName: string, status: ProviderCapabilities['status'], detail: string): ProviderCapabilities {
-  const models = catalog.models.map((model) => ({
-    id: model.id,
-    label: model.label,
-    kind: model.kind,
-    description: model.label,
-    supportsReferences: model.referenceCap > 0,
-    supportsCharacter: false,
-    aliases: model.aliases,
-    referenceCap: model.referenceCap,
-    maxDuration: model.maxDuration,
-    creditCost: null,
-  }));
-  return {
-    provider: 'google-flow',
-    status,
-    label: 'Google Flow',
-    detail,
-    models,
-    imageAspectRatios: catalog.imageAspectRatios,
-    videoAspectRatios: catalog.videoAspectRatios,
-    profileName,
-    supportsImageToVideo: models.some((model) => model.kind === 'video' && model.referenceCap > 0),
-    creditCost: null,
-  };
-}
 
 function saveFlowAccount(profileName: string, label: string, connection: ProviderAccount['connection']): void {
   const db = mustStore();
@@ -391,19 +375,31 @@ function pruneAnonymousPendingFlowAccounts(): boolean {
   return true;
 }
 
-function startFlowSignInPreparation(): void {
-  if (MOCK_PROVIDER_ENABLED) return;
-  // Warm the private connector and browser while the user reviews onboarding
-  // and the Flow notice. This downloads local runtime files only; it does not
-  // open Google, sign in, or send prompts or media.
-  void flowCli.prewarm().catch((error: unknown) => console.warn('Flow sign-in preparation failed:', error));
+function startFlowCapabilityLoad(): void {
+  if (MOCK_PROVIDER_ENABLED || flowCatalogLoadStarted) return;
+  flowCatalogLoadStarted = true;
+  // Load the live model/aspect catalog in the background while the user reviews
+  // the connection notice. This does not open Chrome or send media.
+  void getFlowCatalog().then(async (catalog) => {
+    if (capabilities.provider !== 'google-flow') return;
+    const profileName = activeFlowProfileName();
+    const ready = mustStore().one("SELECT id FROM accounts WHERE id = ? AND connection = 'connected'", [flowAccountId(profileName)]) !== null;
+    capabilities = mapFlowCapabilities(catalog, profileName, ready ? 'checking' : 'needs-login', ready ? 'Checking the selected Google account.' : 'Sign in to Google Flow to generate media.');
+    applyProviderDefaults();
+    await mustStore().flush();
+    publishSnapshot();
+    if (ready) await verifyFlowSession(profileName);
+  }).catch((error: unknown) => {
+    flowCatalogLoadStarted = false;
+    capabilities = { ...capabilities, status: 'unavailable', detail: error instanceof Error ? error.message : 'The live Flow model list is not available.' };
+    publishSnapshot();
+    console.warn('[Clips] Flow model catalog could not be loaded:', error instanceof Error ? error.message : 'unknown error');
+  });
 }
 
 function applyProviderDefaults(): void {
   if (!store || capabilities.provider !== 'google-flow') return;
-  // activeSettings validates saved preferences against the provider catalog and
-  // only falls back when a saved option has disappeared. Keep valid model and
-  // aspect choices across app restarts and gflow-cli updates.
+  // Validate saved model and aspect preferences against Flow's live catalog.
   mustStore().setSetting('app', activeSettings());
 }
 
@@ -420,8 +416,18 @@ async function setFlowConnectionStatus(profileName: string, status: 'unavailable
 
 async function verifyFlowSession(profileName = activeFlowProfileName()): Promise<void> {
   try {
-    const email = await flowCli.verifySession(profileName);
-    await setFlowConnectionStatus(profileName, 'ready', 'Google Flow is connected through gflow-cli.', email);
+    await flowSessions.connect(profileName);
+    if (!await flowSessions.isAuthenticated(profileName)) throw new Error('Google Flow sign-in has expired. Sign in again to continue.');
+    const email = await flowSessions.accountEmail(profileName);
+    const id = flowAccountId(profileName);
+    const saved = mustStore().one('SELECT label FROM accounts WHERE id = ?', [id]);
+    const previousEmail = saved ? text(saved, 'label') : '';
+    if (email && previousEmail.includes('@') && previousEmail.toLowerCase() !== email.toLowerCase()) {
+      const projects = mustStore().setting<Record<string, string>>('flowProjectIds', {});
+      delete projects[profileName];
+      mustStore().setSetting('flowProjectIds', projects);
+    }
+    await setFlowConnectionStatus(profileName, 'ready', 'Google Flow is connected.', email);
   } catch (error) {
     await setFlowConnectionStatus(profileName, 'needs-login', error instanceof Error ? error.message : 'Sign in to Google Flow to generate media.');
   }
@@ -430,25 +436,18 @@ async function verifyFlowSession(profileName = activeFlowProfileName()): Promise
 async function loadFlowProvider(): Promise<void> {
   if (MOCK_PROVIDER_ENABLED) return;
   try {
-    const [catalog, profiles] = await Promise.all([flowCli.catalog(), flowCli.profiles()]);
-    for (const profile of profiles) {
-      const id = flowAccountId(profile.name);
-      if (profile.cookies_present && mustStore().one('SELECT id FROM accounts WHERE id = ?', [id])) {
-        saveFlowAccount(profile.name, profile.google_account || 'Google Flow', 'connected');
-      }
-    }
+    const catalog = await getFlowCatalog();
     pruneAnonymousPendingFlowAccounts();
     const profileName = activeFlowProfileName();
-    const profile = profiles.find((item) => item.name === profileName);
-    const hasSession = Boolean(profile?.cookies_present);
-    capabilities = buildFlowCapabilities(catalog, profileName, hasSession ? 'checking' : 'needs-login', hasSession ? 'Verifying the saved Google session.' : 'Sign in to Google Flow to generate media.');
+    const hasSession = mustStore().one("SELECT id FROM accounts WHERE id = ? AND connection = 'connected'", [flowAccountId(profileName)]) !== null;
+    capabilities = mapFlowCapabilities(catalog, profileName, hasSession ? 'checking' : 'needs-login', hasSession ? 'Verifying the saved Google session.' : 'Sign in to Google Flow to generate media.');
     applyProviderDefaults();
     await mustStore().flush();
     publishSnapshot();
     if (hasSession) await verifyFlowSession(profileName);
   } catch (error) {
     const profileName = activeFlowProfileName();
-    capabilities = { ...capabilities, profileName, status: 'unavailable', detail: error instanceof Error ? error.message : 'gflow-cli is not available.' };
+    capabilities = { ...capabilities, profileName, status: 'unavailable', detail: error instanceof Error ? error.message : 'The live Flow model list is not available.' };
     if (store) {
       await mustStore().flush();
       publishSnapshot();
@@ -553,44 +552,6 @@ function requireFlowNotice(): void {
   if (!flowNoticeAccepted()) throw new ClipsError('PERMISSION_DENIED', 'Review and accept the Google Flow notice before connecting or generating.');
 }
 
-/**
- * One-time auth migration: start with a genuinely clean gflow profile so the
- * first login cannot silently reuse a previously selected Google session.
- * Media, projects, and generation history remain untouched.
- */
-function ensureFreshFlowSignIn(): Promise<void> {
-  if (MOCK_PROVIDER_ENABLED || mustStore().setting<number>('flowAccountResetVersion', 0) >= FLOW_ACCOUNT_RESET_VERSION) return Promise.resolve();
-  if (flowAccountResetPromise) return flowAccountResetPromise;
-  flowAccountResetInProgress = true;
-  capabilities = { ...capabilities, status: 'checking', profileName: FLOW_PROFILE_NAME, detail: '' };
-  publishSnapshot();
-  flowAccountResetPromise = (async () => {
-    const profiles = await flowCli.profiles();
-    for (const profile of profiles) await flowCli.logout(profile.name);
-
-    const settings = activeSettings();
-    settings.activeAccountId = FLOW_ACCOUNT_ID;
-    const db = mustStore();
-    db.transaction(() => {
-      db.run("DELETE FROM accounts WHERE provider = 'google-flow'");
-      db.run('INSERT INTO accounts (id, provider, label, connection, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, label = excluded.label, connection = excluded.connection', [FLOW_ACCOUNT_ID, 'google-flow', 'Google Flow', 'needs-login', nowIso()]);
-      db.setSetting('app', settings);
-      db.setSetting('flowAccountResetVersion', FLOW_ACCOUNT_RESET_VERSION);
-    });
-    await db.flush();
-    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: '' };
-    flowAccountResetInProgress = false;
-    publishSnapshot();
-  })().catch((error: unknown) => {
-    flowAccountResetInProgress = false;
-    flowAccountResetPromise = null;
-    capabilities = { ...capabilities, status: 'needs-login', profileName: FLOW_PROFILE_NAME, detail: 'Could not prepare Google sign-in.' };
-    publishSnapshot();
-    throw error;
-  });
-  return flowAccountResetPromise;
-}
-
 function getSnapshot(): AppSnapshot {
   const db = mustStore();
   const settings = activeSettings();
@@ -602,7 +563,7 @@ function getSnapshot(): AppSnapshot {
   const jobs = db.all('SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC').map(jobFromRow)
     .filter((job) => MOCK_PROVIDER_ENABLED || job.provider !== 'mock');
   const accounts = db.all('SELECT * FROM accounts ORDER BY created_at ASC, rowid ASC').map(accountFromRow)
-    .filter((account) => MOCK_PROVIDER_ENABLED || (!flowAccountResetInProgress && mustStore().setting<number>('flowAccountResetVersion', 0) >= FLOW_ACCOUNT_RESET_VERSION && account.provider !== 'mock' && !(account.label === 'Google Flow' && account.connection === 'needs-login')));
+    .filter((account) => MOCK_PROVIDER_ENABLED || (account.provider !== 'mock' && !(account.label === 'Google Flow' && account.connection === 'needs-login')));
   return {
     revision: snapshotRevision,
     updatedAt: nowIso(),
@@ -1018,7 +979,7 @@ async function completeMockJob(job: GenerationJob): Promise<void> {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'mock', 'mock', ?, ?, ?, ?, ?, ?)`, [
           assetId, job.kind, job.kind === 'image' ? `${promptLine || 'Untitled image'} · ${index + 1}` : `${promptLine || 'Motion study'} · sample`,
           sourceName, storageName, media.mimeType, statResult.size, dim.width, dim.height,
-          job.kind === 'video' ? 4000 : null, job.accountId, job.id, job.prompt, job.modelId,
+          job.kind === 'video' ? (job.inputAssetIds.length > 0 ? 8000 : 4000) : null, job.accountId, job.id, job.prompt, job.modelId,
           JSON.stringify(job.inputAssetIds), finishedAt,
         ]);
         if (job.characterId) {
@@ -1051,8 +1012,9 @@ async function runFlowJob(jobId: EntityId): Promise<void> {
     const row = db.one('SELECT * FROM jobs WHERE id = ?', [jobId]);
     if (!row || text(row, 'status') !== 'queued') return;
     const job = jobFromRow(row);
+    const profileName = job.accountId ? flowProfileName(job.accountId) : activeFlowProfileName();
     const startedAt = nowIso();
-    db.run("UPDATE jobs SET status = 'running', progress = 0, stage = 'Starting gflow-cli', started_at = ? WHERE id = ?", [startedAt, jobId]);
+    db.run("UPDATE jobs SET status = 'running', progress = 0, stage = 'Connecting to Google Flow', started_at = ? WHERE id = ?", [startedAt, jobId]);
     await db.flush();
     publishSnapshot();
     await fs.mkdir(outputDirectory, { recursive: true });
@@ -1062,34 +1024,28 @@ async function runFlowJob(jobId: EntityId): Promise<void> {
       if (!asset) throw new ClipsError('NOT_FOUND', 'One of the selected reference images is no longer in the library.');
       return safeMediaPath(text(asset, 'storage_name'));
     });
-    const verb = job.kind === 'image'
-      ? sourcePaths.length ? 'i2i' : 't2i'
-      : sourcePaths.length ? 'r2v' : 't2v';
-    const args = job.kind === 'image' ? ['image', verb] : ['video', verb];
-    args.push(job.prompt);
-    for (const sourcePath of sourcePaths) args.push('--ref', sourcePath);
-    args.push('--model', job.modelId, '--aspect', job.aspectRatio);
-    if (job.kind === 'image') args.push('--count', String(job.outputCount), '--out', outputDirectory);
-    else args.push('--count', '1', '--out-dir', outputDirectory);
-    args.push('--profile', job.accountId ? flowProfileName(job.accountId) : activeFlowProfileName(), '--json');
-
-    db.run("UPDATE jobs SET progress = 0, stage = 'Generating with Google Flow' WHERE id = ?", [jobId]);
+    const connected = await flowSessions.connect(profileName);
+    if (!await flowSessions.isAuthenticated(profileName)) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Your Google Flow session has expired. Reconnect your account before generating.');
+    const provider = new GoogleFlowProvider(connected.page);
+    const projectIds = mustStore().setting<Record<string, string>>('flowProjectIds', {});
+    const projectId = await provider.ensureProject(projectIds[profileName]);
+    if (projectIds[profileName] !== projectId) {
+      projectIds[profileName] = projectId;
+      mustStore().setSetting('flowProjectIds', projectIds);
+      await mustStore().flush();
+    }
+    db.run("UPDATE jobs SET progress = 5, stage = 'Sending request to Flow' WHERE id = ?", [jobId]);
     await db.flush();
     publishSnapshot();
-    const stdout = await flowCli.generate(args);
-    const generatedPaths = parseGenerationPaths(stdout, job.kind);
+    const onProgress = (progress: number, stage: string): void => {
+      db.run("UPDATE jobs SET progress = ?, stage = ? WHERE id = ? AND status = 'running'", [Math.max(0, Math.min(99, Math.round(progress))), stage, jobId]);
+      void db.flush().then(publishSnapshot).catch(() => undefined);
+    };
+    const generatedPaths = job.kind === 'image'
+      ? await provider.generateImages({ projectId, prompt: job.prompt, modelId: job.modelId, aspectRatio: job.aspectRatio, count: job.outputCount, inputPaths: sourcePaths, outputDirectory, onProgress })
+      : await provider.generateVideo({ projectId, prompt: job.prompt, modelId: job.modelId, aspectRatio: job.aspectRatio, inputPaths: sourcePaths, outputDirectory, onProgress });
     if (!generatedPaths.length) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Flow finished without returning any local media files.');
-    const resolvedPaths = await Promise.all(generatedPaths.map(async (filePath) => {
-      const resolved = path.resolve(filePath);
-      const relative = path.relative(outputDirectory, resolved);
-      if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
-        throw new ClipsError('PERMISSION_DENIED', 'gflow-cli returned a file outside its temporary output folder.');
-      }
-      const stat = await fs.stat(resolved);
-      if (!stat.isFile()) throw new ClipsError('UNSUPPORTED_MEDIA', 'gflow-cli returned a path that is not a media file.');
-      return resolved;
-    }));
-    const summary = await importPaths(resolvedPaths, {
+    const summary = await importPaths(generatedPaths, {
       source: 'flow-generation',
       provider: 'google-flow',
       accountId: job.accountId,
@@ -1190,7 +1146,7 @@ function prepareGenerationRequest(request: GenerationRequest, kind: 'image'): Ge
   const model = modelFor(modelId, kind);
   const aspectRatio = validateAspectRatio(request.aspectRatio ?? settings.imageAspectRatio, 'image');
   const outputCount = request.outputCount ?? settings.outputCount;
-  if (capabilities.provider === 'google-flow' && outputCount > 4) throw new ClipsError('INVALID_INPUT', 'gflow-cli supports up to four images in one generation.');
+  if (capabilities.provider === 'google-flow' && outputCount > 4) throw new ClipsError('INVALID_INPUT', 'Flow supports up to four images in one generation.');
   const references = request.referenceAssetIds ?? settings.drafts.image.referenceAssetIds;
   const characterId = request.characterId === undefined ? settings.drafts.image.characterId : request.characterId;
   validateCharacter(characterId);
@@ -1521,53 +1477,38 @@ async function readStorageSummary(): Promise<StorageSummary> {
 
 async function connectFlowProfile(profileName: string, options: { transient?: boolean } = {}): Promise<ProviderCapabilities> {
   requireFlowNotice();
-  await ensureFreshFlowSignIn();
   if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google Flow sign-in is unavailable in the local test provider.');
   capabilities = { ...capabilities, profileName, status: 'checking', detail: '' };
   publishSnapshot();
   try {
-    let profiles = await flowCli.profiles();
-    let profile = profiles.find((candidate) => candidate.name === profileName);
-    let email = profile?.google_account ?? '';
-    if (profile?.cookies_present) {
-      const verifyStartedAt = Date.now();
-      try {
-        email = await flowCli.verifySession(profileName) || email;
-        if (!app.isPackaged) console.info(`[Clips] Existing Flow session verified in ${Date.now() - verifyStartedAt} ms.`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!isFlowSessionMissing(message)) throw error;
-        const loginStartedAt = Date.now();
-        await flowCli.login(profileName);
-        if (!app.isPackaged) console.info(`[Clips] Flow login completed in ${Date.now() - loginStartedAt} ms.`);
-        // A successful `gflow auth login` already verifies the session before
-        // exiting. Read the resulting account label from local profile metadata.
-        profiles = await flowCli.profiles().catch(() => []);
-        email = profiles.find((candidate) => candidate.name === profileName)?.google_account ?? email;
+    const connectStartedAt = Date.now();
+    const account = mustStore().one('SELECT connection FROM accounts WHERE id = ?', [flowAccountId(profileName)]);
+    if (account && text(account, 'connection') === 'connected') {
+      await flowSessions.connect(profileName);
+      if (!await flowSessions.isAuthenticated(profileName)) {
+        await flowSessions.close(profileName);
+        await flowSessions.login(profileName);
       }
     } else {
-      const loginStartedAt = Date.now();
-      await flowCli.login(profileName);
-      if (!app.isPackaged) console.info(`[Clips] Flow login completed in ${Date.now() - loginStartedAt} ms.`);
-      // A successful `gflow auth login` already verifies the session before
-      // exiting. Read the resulting account label from local profile metadata.
-      profiles = await flowCli.profiles().catch(() => []);
-      email = profiles.find((candidate) => candidate.name === profileName)?.google_account ?? email;
+      await flowSessions.login(profileName);
     }
-    let connected: ProviderCapabilities = { ...capabilities, profileName, status: 'ready', detail: 'Google Flow is connected through gflow-cli.' };
-    if (connected.models.length === 0) {
-      connected = buildFlowCapabilities(await flowCli.catalog(), profileName, 'ready', connected.detail);
-    }
-    capabilities = connected;
-    saveFlowAccount(profileName, email || 'Google Flow', 'connected');
+    if (!await flowSessions.isAuthenticated(profileName)) throw new Error('Google Flow did not confirm the sign-in. Try connecting again.');
+    if (!app.isPackaged) console.info(`[Clips] Flow browser session ready in ${Date.now() - connectStartedAt} ms.`);
+    const hasCatalog = capabilities.models.length > 0;
+    capabilities = {
+      ...capabilities, profileName, status: hasCatalog ? 'ready' : 'checking',
+      detail: hasCatalog ? 'Google Flow is connected.' : 'Loading current Flow models and options.',
+    };
+    const email = await flowSessions.accountEmail(profileName);
+    const prior = mustStore().one('SELECT label FROM accounts WHERE id = ?', [flowAccountId(profileName)]);
+    saveFlowAccount(profileName, email || (prior ? text(prior, 'label') : 'Google Flow'), 'connected');
     await mustStore().flush();
     publishSnapshot();
     return capabilities;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Flow sign-in could not be completed.';
-    const cancelled = isFlowSignInCancelled(message);
-    const unavailable = message.includes('gflow-cli is not installed') || message.includes('Could not start gflow-cli');
-    capabilities = { ...capabilities, profileName, status: unavailable ? 'unavailable' : 'needs-login', detail: cancelled ? '' : message };
+    const cancelled = error instanceof FlowSessionError && error.code === 'SIGN_IN_CANCELLED' || message.includes('taking too long') || message.includes('closed before');
+    capabilities = { ...capabilities, profileName, status: 'needs-login', detail: cancelled ? '' : message };
     if (!options.transient) {
       const id = flowAccountId(profileName);
       const prior = mustStore().one('SELECT label FROM accounts WHERE id = ?', [id]);
@@ -1584,19 +1525,17 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.acceptFlowNotice, TRUSTED_NO_INPUT, async () => {
     mustStore().setSetting('flowNoticeAcceptance', { version: FLOW_NOTICE_VERSION, acceptedAt: nowIso() });
     await flushAndPublish();
-    startFlowSignInPreparation();
+    startFlowCapabilityLoad();
   });
   handle(IPC_CHANNELS.openLegalLink, z.object({ link: z.enum(['google-terms', 'flow-terms', 'gflow-disclaimer']) }).strict(), async ({ link }: { link: keyof typeof LEGAL_LINKS }) => {
     await shell.openExternal(LEGAL_LINKS[link]);
   });
   handle(IPC_CHANNELS.getStorageSummary, TRUSTED_NO_INPUT, readStorageSummary);
   handle(IPC_CHANNELS.connectFlow, TRUSTED_NO_INPUT, async () => {
-    await ensureFreshFlowSignIn();
     return connectFlowProfile(activeFlowProfileName());
   });
   handle(IPC_CHANNELS.addFlowAccount, TRUSTED_NO_INPUT, async () => {
     requireFlowNotice();
-    await ensureFreshFlowSignIn();
     const profileName = `clips-${randomUUID().slice(0, 8)}`;
     const accountId = flowAccountId(profileName);
     const previousSettings = activeSettings();
@@ -1618,7 +1557,6 @@ function registerIpc(): void {
   });
   handle(IPC_CHANNELS.selectFlowAccount, IpcSchema.selectFlowAccount, async ({ accountId }) => {
     requireFlowNotice();
-    await ensureFreshFlowSignIn();
     const account = mustStore().one('SELECT provider FROM accounts WHERE id = ?', [accountId]);
     if (!account || text(account, 'provider') !== 'google-flow') throw new ClipsError('NOT_FOUND', 'That Google account is not available.');
     const settings = activeSettings();
@@ -1636,7 +1574,10 @@ function registerIpc(): void {
     requireFlowNotice();
     if (MOCK_PROVIDER_ENABLED) throw new ClipsError('PROVIDER_UNAVAILABLE', 'Google sign-out is unavailable in the local test provider.');
     const profileName = activeFlowProfileName();
-    await flowCli.logout(profileName);
+    await flowSessions.logout(profileName);
+    const projectIds = mustStore().setting<Record<string, string>>('flowProjectIds', {});
+    delete projectIds[profileName];
+    mustStore().setSetting('flowProjectIds', projectIds);
     const id = flowAccountId(profileName);
     const prior = mustStore().one('SELECT label FROM accounts WHERE id = ?', [id]);
     saveFlowAccount(profileName, prior ? text(prior, 'label') : 'Google Flow', 'needs-login');
@@ -1901,14 +1842,12 @@ async function initialize(): Promise<void> {
   store = await DatabaseStore.open(path.join(userData, 'clips.sqlite'));
   await seedLocalLibrary();
   if (pruneAnonymousPendingFlowAccounts()) await mustStore().flush();
-  const freshSignIn = ensureFreshFlowSignIn();
-  void freshSignIn.catch((error: unknown) => console.warn('Google sign-in reset failed:', error));
-  startFlowSignInPreparation();
   savedWindowState = await loadWindowState();
   rebuildApplicationMenu(activeSettings().locale);
   installMediaProtocol();
   registerIpc();
   createWindow();
+  if (flowNoticeAccepted()) startFlowCapabilityLoad();
   resumeJobs();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1948,7 +1887,7 @@ app.on('before-quit', (event) => {
   closingStore = true;
   const closing = store;
   store = null;
-  void Promise.all([closing.close(), windowStateWrite]).finally(() => app.quit());
+  void Promise.all([closing.close(), windowStateWrite, flowSessions.close()]).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

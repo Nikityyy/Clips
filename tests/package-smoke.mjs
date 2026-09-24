@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
+import { createRequire } from 'node:module';
 
 const root = process.cwd();
 const isolation = await mkdtemp(path.join(os.tmpdir(), 'clips-package-smoke-'));
@@ -22,7 +23,16 @@ const archivePath = process.platform === 'darwin'
   ? path.join(packageDirectory, 'app.asar')
   : path.join(packageDirectory, 'resources', 'app.asar');
 const localEnv = { CLIPS_TEST_PACKAGED_USER_DATA: isolation };
-assert.equal(existsSync(path.join(packageDirectory, 'resources', 'flow-runtime-spec.json')), true, 'the Windows installer should include the pinned runtime manifest without bundling the runtime payload');
+assert.equal(existsSync(path.join(packageDirectory, 'resources', 'flow-runtime-spec.json')), true, 'the installer should include the pinned catalog runtime manifest');
+const runtimeSeed = path.join(packageDirectory, 'resources', 'flow-runtime-seed');
+const catalogTool = process.platform === 'win32'
+  ? path.join(runtimeSeed, 'uv', 'tools', 'gflow-cli', 'Scripts', 'gflow.exe')
+  : path.join(runtimeSeed, 'uv', 'tools', 'gflow-cli', 'bin', 'gflow');
+const playwrightNode = process.platform === 'win32'
+  ? path.join(runtimeSeed, 'uv', 'tools', 'gflow-cli', 'Lib', 'site-packages', 'playwright', 'driver', 'node.exe')
+  : path.join(runtimeSeed, 'uv', 'tools', 'gflow-cli', 'lib', 'python3.13', 'site-packages', 'playwright', 'driver', 'node');
+assert.equal(existsSync(catalogTool), true, 'the installer should include a preinstalled catalog-only gflow command');
+assert.equal(existsSync(playwrightNode), false, 'the installer should omit Playwright’s unused browser driver');
 
 let app;
 try {
@@ -42,7 +52,7 @@ try {
   const fixtureFiles = packagedFiles.filter((file) => /(?:^|\/)(?:fixtures\/dev-media|media\/mock)(?:\/|$)/i.test(file));
   const productionPackages = packagedFiles.filter((file) => file.startsWith('node_modules/')).map((file) => file.split('/').slice(0, 2).join('/'));
   const uniqueProductionPackages = [...new Set(productionPackages)];
-  assert.deepEqual(uniqueProductionPackages.toSorted(), ['node_modules/sql.js', 'node_modules/zod'], 'the packaged app should include only main-process runtime dependencies');
+  assert.deepEqual(uniqueProductionPackages.toSorted(), ['node_modules/playwright-core', 'node_modules/sql.js', 'node_modules/zod'], 'the packaged app should include only the main-process runtime dependencies needed for SQLite, validation, and the Chrome bridge');
   assert.deepEqual(fixtureFiles, [], 'the installer archive should contain no development example media');
   assert.equal(existsSync(path.join(root, 'fixtures', 'dev-media')), true, 'development fixtures should remain available to the source workspace');
   await page.evaluate(() => document.fonts.ready);
@@ -61,6 +71,17 @@ try {
   const signIn = page.getByRole('dialog');
   await signIn.getByRole('heading', { name: /Connect your Google account|Google-Konto verbinden/ }).waitFor();
   assert.deepEqual(rendererErrors, [], `packaged renderer errors: ${rendererErrors.join('; ')}`);
+  const catalogIsolation = await mkdtemp(path.join(os.tmpdir(), 'clips-catalog-runtime-smoke-'));
+  try {
+    const require = createRequire(import.meta.url);
+    const { FlowCatalogClient } = require(path.join(root, 'out-electron', 'electron', 'flow-catalog.js'));
+    const catalog = await new FlowCatalogClient(() => catalogIsolation, () => runtimeSeed).catalog();
+    assert.ok(catalog.models.some((model) => model.kind === 'image'), 'the installed runtime should load image models');
+    assert.ok(catalog.models.some((model) => model.kind === 'video'), 'the installed runtime should load video models');
+    assert.ok(catalog.imageAspectRatios.length > 0 && catalog.videoAspectRatios.length > 0, 'the installed runtime should load current aspect ratios');
+  } finally {
+    await rm(catalogIsolation, { recursive: true, force: true });
+  }
   console.log('Packaged app smoke test passed: isolated empty library, Flow-only provider, and no development sample fixtures in app.asar.');
 } finally {
   if (app) await app.close().catch(() => undefined);

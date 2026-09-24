@@ -24,10 +24,10 @@ function run(executable, args, env) {
 
 try {
   await fs.mkdir(seedRoot, { recursive: true });
-  await Promise.all(['bin', 'uv/tools', 'uv/python', 'gflow-home'].map((directory) => fs.rm(path.join(seedRoot, directory), { recursive: true, force: true })));
+  await Promise.all(['bin', 'uv/bin', 'uv/tools', 'uv/python', 'gflow-home', 'browsers'].map((directory) => fs.rm(path.join(seedRoot, directory), { recursive: true, force: true })));
   await fs.rm(path.join(seedRoot, 'runtime-info.json'), { force: true });
   const directories = [
-    'bin', 'uv/tools', 'uv/cache', 'uv/python', 'browsers', 'gflow-home',
+    'bin', 'uv/bin', 'uv/tools', 'uv/cache', 'uv/python', 'gflow-home',
   ];
   await Promise.all(directories.map((directory) => fs.mkdir(path.join(seedRoot, directory), { recursive: true })));
   const response = await fetch(`https://releases.astral.sh/github/uv/releases/download/${spec.uvVersion}/${build.archive}`, { signal: AbortSignal.timeout(120_000) });
@@ -49,27 +49,27 @@ try {
     ...process.env,
     GFLOW_CLI_HOME: path.join(seedRoot, 'gflow-home'),
     UV_TOOL_DIR: path.join(seedRoot, 'uv', 'tools'),
+    UV_TOOL_BIN_DIR: path.join(seedRoot, 'uv', 'bin'),
+    UV_PYTHON_BIN_DIR: path.join(seedRoot, 'uv', 'bin'),
     UV_CACHE_DIR: path.join(seedRoot, 'uv', 'cache'),
     UV_PYTHON_INSTALL_DIR: path.join(seedRoot, 'uv', 'python'),
     UV_MANAGED_PYTHON: '1',
     UV_PYTHON_DOWNLOADS: 'automatic',
-    PLAYWRIGHT_BROWSERS_PATH: path.join(seedRoot, 'browsers'),
   };
-  console.log(`Preparing pinned gflow-cli ${spec.gflowVersion}, managed Python ${spec.pythonVersion}, and Chromium for ${platformKey}…`);
+  console.log(`Preparing the live model catalog runtime (gflow-cli ${spec.gflowVersion}, Python ${spec.pythonVersion}) for ${platformKey}…`);
   await run(uvPath, ['python', 'install', spec.pythonVersion], runtimeEnv);
+  await run(uvPath, ['tool', 'install', '--python', spec.pythonVersion, `gflow-cli==${spec.gflowVersion}`], runtimeEnv);
+  const toolRoot = path.join(seedRoot, 'uv', 'tools', 'gflow-cli');
+  const driverNode = process.platform === 'win32'
+    ? path.join(toolRoot, 'Lib', 'site-packages', 'playwright', 'driver', 'node.exe')
+    : path.join(toolRoot, 'lib', `python${spec.pythonVersion}`, 'site-packages', 'playwright', 'driver', 'node');
+  await fs.rm(driverNode, { force: true });
+  const command = process.platform === 'win32' ? path.join(toolRoot, 'Scripts', 'gflow.exe') : path.join(toolRoot, 'bin', 'gflow');
+  await fs.access(command);
   await run(uvPath, ['tool', 'run', '--python', spec.pythonVersion, '--from', `gflow-cli==${spec.gflowVersion}`, 'gflow', '--help'], runtimeEnv);
-  await run(uvPath, ['tool', 'run', '--python', spec.pythonVersion, '--from', `gflow-cli==${spec.gflowVersion}`, 'playwright', 'install', 'chromium', '--no-shell'], runtimeEnv);
-  await fs.writeFile(path.join(seedRoot, 'browsers', `clips-chromium-${spec.gflowVersion}.ready`), spec.gflowVersion, 'utf8');
+  await fs.rm(path.join(seedRoot, 'uv', 'cache'), { recursive: true, force: true });
+  await fs.mkdir(path.join(seedRoot, 'uv', 'cache'), { recursive: true });
   await fs.writeFile(path.join(seedRoot, 'runtime-info.json'), JSON.stringify({ gflowVersion: spec.gflowVersion, pythonVersion: spec.pythonVersion }));
-  const archiveCache = path.join(seedRoot, 'uv', 'cache', 'archive-v0');
-  for (const entry of await fs.readdir(archiveCache, { withFileTypes: true }).catch(() => [])) {
-    if (!entry.isDirectory()) continue;
-    const cachedVenv = path.join(archiveCache, entry.name);
-    try { await fs.access(path.join(cachedVenv, 'pyvenv.cfg')); await fs.rm(cachedVenv, { recursive: true, force: true }); } catch { /* package archive, not a movable tool environment */ }
-  }
-  for (const entry of await fs.readdir(path.join(seedRoot, 'browsers'))) {
-    if (entry.startsWith('chromium_headless_shell-')) await fs.rm(path.join(seedRoot, 'browsers', entry), { recursive: true, force: true });
-  }
   console.log(`Prepared installer runtime seed at ${seedRoot}.`);
 } finally {
   await fs.rm(scratch, { recursive: true, force: true });

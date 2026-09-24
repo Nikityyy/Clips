@@ -27,7 +27,7 @@
     "lint": "oxlint .",
     "test": "vitest run",
     "package": "npm run build && npm run prepare:flow-runtime && electron-builder",
-    "package:win": "npm run build && electron-builder --win",
+    "package:win": "npm run build && npm run prepare:flow-runtime && electron-builder --win",
     "package:mac": "npm run build && npm run prepare:flow-runtime && electron-builder --mac",
     "package:linux": "npm run build && npm run prepare:flow-runtime && electron-builder --linux",
     "test:e2e": "npm run build:electron && concurrently --kill-others --success first \"npm:dev:web\" \"wait-on tcp:127.0.0.1:3000 && node tests/e2e-smoke.mjs && node tests/e2e-dev-seed.mjs\"",
@@ -36,6 +36,7 @@
     "prepare:flow-runtime": "node scripts/prepare-flow-runtime.mjs"
   },
   "dependencies": {
+    "playwright-core": "1.63.0",
     "sql.js": "^1.14.2",
     "zod": "^4.6.5"
   },
@@ -127,6 +128,10 @@
         "to": "licenses/MIT-gflow-cli.txt"
       },
       {
+        "from": "public/licenses/MIT-FlowKit.txt",
+        "to": "licenses/MIT-FlowKit.txt"
+      },
+      {
         "from": "public/licenses/MIT-uv.txt",
         "to": "licenses/MIT-uv.txt"
       },
@@ -155,6 +160,12 @@
       "icon": "assets/clips.ico",
       "target": [
         "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "build/flow-runtime-seed",
+          "to": "flow-runtime-seed"
+        }
       ]
     },
     "nsis": {
