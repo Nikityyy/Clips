@@ -360,7 +360,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .composer-select { width: 100%; }
 .composer-select .menu-select-trigger { min-height: 42px; height: 42px; }
 .composer-select .menu-select-trigger > img { width: 30px; height: 30px; }
-.composer-inline-control .icon-button { flex: 0 0 auto; width: 34px; height: 34px; border: 1px solid var(--line); }
+.composer-inline-control .icon-button { flex: 0 0 auto; width: 34px; height: 42px; border: 1px solid var(--line); }
 .prompt-input, .text-area-control { display: block; width: 100%; min-height: 132px; resize: vertical; padding: 10px 11px; border: 1px solid #3b3b37; border-radius: 4px; background: #131312; color: var(--bone); font-size: 13px; line-height: 1.55; }
 .prompt-input::placeholder, .text-area-control::placeholder { color: #88877f; opacity: 1; }
 .prompt-input:hover, .text-area-control:hover { border-color: #5b5a54; }

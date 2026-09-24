@@ -159,6 +159,8 @@ try {
   assert.ok(titlebarLayout.reservedControlSpace >= 150, 'toolbar actions should stay clear of native caption buttons');
   await page.evaluate(() => document.documentElement.classList.remove('is-windows'));
   assert.equal(await page.locator('.composer-panel > .composer-field').first().locator('.field-label').textContent(), 'Character', 'character choice should be the first generation setting');
+  const figureControlHeights = await page.locator('.composer-inline-control').first().evaluate((element) => [...element.children].map((child) => child.getBoundingClientRect().height));
+  assert.equal(figureControlHeights[1], figureControlHeights[0], 'the add-character button should match the figure selector height');
   assert.equal(await page.locator('.workspace-route').evaluate((element) => getComputedStyle(element).animationName), 'workspace-arrive', 'page changes should use a restrained entrance animation');
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').count(), 1, 'the navigation should use Lucide’s Clapperboard icon');
   assert.equal(await page.locator('.brand-mark svg.lucide-clapperboard').getAttribute('stroke-width'), '2.4', 'the app mark should stay legible at navigation size');
